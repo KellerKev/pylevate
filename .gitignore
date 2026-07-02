@@ -1,0 +1,38 @@
+# Pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# Node
+node_modules/
+package-lock.json
+
+# PyLevate build artifacts
+build_tmp/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local settings (personal, machine-specific)
+.claude/settings.json
+.claude/settings.local.json
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# npm cache
+.npm-cache/

@@ -1,0 +1,31 @@
+<svg width="680" height="180" viewBox="0 0 680 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PyLevate">
+  <defs>
+    <linearGradient id="w-bg" x1="20" y1="30" x2="150" y2="150" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6b7cff"/>
+      <stop offset="1" stop-color="#4a2ea8"/>
+    </linearGradient>
+    <linearGradient id="w-mark" x1="85" y1="42" x2="85" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e7e9ff"/>
+    </linearGradient>
+    <linearGradient id="w-text" x1="190" y1="60" x2="640" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6b7cff"/>
+      <stop offset="1" stop-color="#8a5cf6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- icon mark -->
+  <g transform="translate(20,30)">
+    <rect x="0" y="0" width="120" height="120" rx="28" fill="url(#w-bg)"/>
+    <path d="M60 20 L94 46 L81 46 L60 30 L39 46 L26 46 Z" fill="url(#w-mark)"/>
+    <path d="M60 44 L94 70 L81 70 L60 54 L39 70 L26 70 Z" fill="url(#w-mark)" opacity="0.85"/>
+    <rect x="34" y="83" width="52" height="9" rx="4.5" fill="#ffffff" opacity="0.55"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="172" y="104" font-family="'SF Pro Display','Segoe UI',Helvetica,Arial,sans-serif" font-size="72" font-weight="800" letter-spacing="-2">
+    <tspan fill="url(#w-text)">Py</tspan><tspan fill="url(#w-text)">Levate</tspan>
+  </text>
+  <!-- tagline -->
+  <text x="176" y="140" font-family="'SF Mono','Segoe UI',Consolas,monospace" font-size="18" font-weight="500" letter-spacing="0.5" fill="#8b8fa3">Write Python. Ship everywhere.</text>
+</svg>

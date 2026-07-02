@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PyLevate Hybrid</title>
+  <link rel="stylesheet" href="./main.css">
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #000; overflow: hidden; }
+    #game-canvas { position: fixed; inset: 0; z-index: 0; display: flex; justify-content: center; align-items: center; }
+    #ui-layer { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+  <div id="game-canvas"></div>
+  <div id="ui-layer"></div>
+  <script type="module" src="./game.js"></script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

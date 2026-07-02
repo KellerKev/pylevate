@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PyLevate Playground</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --border: #2a2a4a;
+      --text: #e2e2e2;
+      --accent: #5c6bc0;
+      --accent-hover: #3f51b5;
+      --success: #4caf50;
+      --error: #ff6b6b;
+      --font-mono: 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    header .controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    select, button {
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    .panels {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      min-height: 0;
+    }
+    .panel {
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .panel-header {
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #888;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .panel-body {
+      flex: 1;
+      overflow: auto;
+      min-height: 0;
+    }
+    textarea {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      resize: none;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.6;
+      tab-size: 4;
+      outline: none;
+    }
+    pre {
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #b8c7e0;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: white;
+    }
+    .error-msg {
+      color: var(--error);
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+    }
+    .status {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+    }
+    .status.ok { color: var(--success); }
+    .status.err { color: var(--error); }
+    .status.busy { color: #ff9800; }
+    footer {
+      padding: 0.4rem 1.5rem;
+      font-size: 0.7rem;
+      color: #555;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PyLevate Playground</h1>
+    <div class="controls">
+      <select id="mode-select">
+        <option value="app">App Mode</option>
+        <option value="game">Game Mode</option>
+      </select>
+      <select id="example-select">
+        <option value="">-- Examples --</option>
+        <option value="counter">Counter</option>
+        <option value="button">Button Component</option>
+        <option value="store">Store</option>
+        <option value="conditionals">If/Elif/Else</option>
+        <option value="for-loop">For Loop</option>
+      </select>
+      <button class="primary" id="compile-btn">Compile (Ctrl+Enter)</button>
+      <span class="status" id="status"></span>
+    </div>
+  </header>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">Python Source</div>
+      <div class="panel-body">
+        <textarea id="source" spellcheck="false">from pylevate import Component, h, state, css, mount
+
+
+class App(Component):
+    count = state(0)
+
+    style = css("""
+        .app { max-width: 400px; margin: 2rem auto; text-align: center; font-family: system-ui; }
+        .btn { padding: 0.5rem 1.5rem; border: none; border-radius: 6px; background: #5c6bc0; color: white; font-size: 1.1rem; cursor: pointer; margin: 0 0.5rem; }
+        .count { font-size: 2.5rem; font-weight: bold; margin: 1rem; }
+    """)
+
+    def increment(self):
+        self.count += 1
+
+    def decrement(self):
+        self.count -= 1
+
+    template = {
+        h.div(Class='app'): {
+            h.h1(): 'PyLevate Counter',
+            h.div(): {
+                h.button(Class='btn', onClick={'self.decrement'}): '-',
+                h.span(Class='count'): '[[self.count]]',
+                h.button(Class='btn', onClick={'self.increment'}): '+',
+            },
+        }
+    }
+
+mount(App, '#app')
+</textarea>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">Compiled JavaScript</div>
+      <div class="panel-body">
+        <pre id="output"></pre>
+      </div>
+    </div>
+
+    <div class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-header">Preview</div>
+      <div class="panel-body" id="preview-container">
+        <iframe id="preview"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>PyLevate Playground -- compiler runs server-side via /api/compile</span>
+    <span id="timing"></span>
+  </footer>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const source = $('#source');
+    const output = $('#output');
+    const preview = $('#preview');
+    const status = $('#status');
+    const timing = $('#timing');
+    const modeSelect = $('#mode-select');
+    const exampleSelect = $('#example-select');
+
+    const EXAMPLES = {
+      counter: `from pylevate import Component, h, state, css, mount
+
+
+class App(Component):
+    count = state(0)
+
+    style = css("""
+        .app { max-width: 400px; margin: 2rem auto; text-align: center; font-family: system-ui; }
+        .btn { padding: 0.5rem 1.5rem; border: none; border-radius: 6px; background: #5c6bc0; color: white; font-size: 1.1rem; cursor: pointer; margin: 0 0.5rem; }
+        .count { font-size: 2.5rem; font-weight: bold; margin: 1rem; }
+    """)
+
+    def increment(self):
+        self.count += 1
+
+    def decrement(self):
+        self.count -= 1
+
+    template = {
+        h.div(Class='app'): {
+            h.h1(): 'PyLevate Counter',
+            h.div(): {
+                h.button(Class='btn', onClick={'self.decrement'}): '-',
+                h.span(Class='count'): '[[self.count]]',
+                h.button(Class='btn', onClick={'self.increment'}): '+',
+            },
+        }
+    }
+
+mount(App, '#app')`,
+
+      button: `from pylevate import Component, h, css, mount
+
+
+class Button(Component):
+    def __init__(self, label, variant='primary', on_click=None, **kw):
+        super().__init__(label=label, variant=variant, on_click=on_click, **kw)
+
+    style = css("""
+        .btn { padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; color: white; font-size: 1rem; }
+        .primary { background: #5c6bc0; }
+        .danger { background: #e53935; }
+    """)
+
+    template = {
+        h.button(Class='btn', onClick={'on_click'}): '[[label]]',
+    }
+
+
+class App(Component):
+    template = {
+        h.div(): {
+            Button(label='Click me', on_click={'() => alert("Hello!")}): None,
+            Button(label='Danger', variant='danger'): None,
+        }
+    }
+
+mount(App, '#app')`,
+
+      store: `from pylevate import Component, Store, h, state, computed, action, css, mount
+from pylevate.signals import signal
+
+
+class TodoStore(Store):
+    items = signal([])
+
+    @computed
+    def count(self):
+        return len(self.items)
+
+    @action
+    def add(self, text):
+        self.items = [*self.items, {'text': text, 'done': False}]
+
+    @action
+    def toggle(self, index):
+        items = [*self.items]
+        items[index]['done'] = not items[index]['done']
+        self.items = items
+
+store = TodoStore()
+
+
+class App(Component):
+    input_text = state('')
+
+    style = css("""
+        .app { max-width: 400px; margin: 2rem auto; font-family: system-ui; }
+        .item { padding: 0.5rem; border-bottom: 1px solid #eee; }
+        .done { text-decoration: line-through; color: #999; }
+    """)
+
+    def add_todo(self):
+        if self.input_text:
+            store.add(self.input_text)
+            self.input_text = ''
+
+    template = {
+        h.div(Class='app'): {
+            h.h1(): 'Todos ([[store.count]])',
+            h.input(type='text', value={'self.input_text'},
+                    onInput={'e => self.input_text = e.target.value'}): None,
+            h.button(onClick={'self.add_todo'}): 'Add',
+        }
+    }
+
+mount(App, '#app')`,
+
+      conditionals: `from pylevate import Component, h, state, css, mount
+
+
+class App(Component):
+    status = state('active')
+
+    style = css("""
+        .app { max-width: 400px; margin: 2rem auto; text-align: center; font-family: system-ui; }
+        .active { color: #4caf50; font-weight: bold; }
+        .pending { color: #ff9800; font-weight: bold; }
+        .inactive { color: #999; }
+        .btn { margin: 0.25rem; padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; background: white; }
+    """)
+
+    template = {
+        h.div(Class='app'): {
+            h.h1(): 'Status: [[self.status]]',
+            h.Template(If={'self.status === "active"'}): {
+                h.p(Class='active'): 'System is running.',
+            },
+            h.Template(Elif={'self.status === "pending"'}): {
+                h.p(Class='pending'): 'Waiting for approval...',
+            },
+            h.Template(Else=''): {
+                h.p(Class='inactive'): 'System is offline.',
+            },
+            h.div(): {
+                h.button(Class='btn', onClick={'() => self.status = "active"'}): 'Active',
+                h.button(Class='btn', onClick={'() => self.status = "pending"'}): 'Pending',
+                h.button(Class='btn', onClick={'() => self.status = "inactive"'}): 'Inactive',
+            },
+        }
+    }
+
+mount(App, '#app')`,
+
+      'for-loop': `from pylevate import Component, h, state, css, mount
+
+
+class App(Component):
+    items = state([
+        {'name': 'Apple', 'price': 1.50},
+        {'name': 'Banana', 'price': 0.75},
+        {'name': 'Cherry', 'price': 3.00},
+        {'name': 'Date', 'price': 5.50},
+    ])
+
+    style = css("""
+        .app { max-width: 500px; margin: 2rem auto; font-family: system-ui; }
+        .card { border: 1px solid #eee; padding: 1rem; margin: 0.5rem 0; border-radius: 8px; display: flex; justify-content: space-between; }
+        .name { font-weight: bold; }
+        .price { color: #5c6bc0; }
+    """)
+
+    template = {
+        h.div(Class='app'): {
+            h.h1(): 'Product List',
+            h.Template(For='item in self.items'): {
+                h.div(Class='card'): {
+                    h.span(Class='name'): '[[item["name"]]]',
+                    h.span(Class='price'): '$[[item["price"]]]',
+                },
+            },
+        }
+    }
+
+mount(App, '#app')`,
+    };
+
+    exampleSelect.addEventListener('change', () => {
+      const ex = exampleSelect.value;
+      if (ex && EXAMPLES[ex]) {
+        source.value = EXAMPLES[ex];
+        compile();
+      }
+    });
+
+    async function compile() {
+      const code = source.value;
+      const mode = modeSelect.value;
+      status.textContent = 'Compiling...';
+      status.className = 'status busy';
+
+      const t0 = performance.now();
+
+      try {
+        const res = await fetch('/api/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: code, mode, filename: 'playground.py' }),
+        });
+        const data = await res.json();
+        const elapsed = (performance.now() - t0).toFixed(0);
+        timing.textContent = `${elapsed}ms`;
+
+        if (data.errors && data.errors.length > 0) {
+          output.textContent = data.errors.join('\n');
+          output.style.color = '#ff6b6b';
+          status.textContent = 'Error';
+          status.className = 'status err';
+          return;
+        }
+
+        output.textContent = data.js;
+        output.style.color = '';
+        status.textContent = 'OK';
+        status.className = 'status ok';
+
+        // Render preview
+        if (data.js && mode === 'app') {
+          renderPreview(data.js, data.css || '');
+        }
+      } catch (err) {
+        output.textContent = 'Server error: ' + err.message;
+        output.style.color = '#ff6b6b';
+        status.textContent = 'Error';
+        status.className = 'status err';
+        timing.textContent = '';
+      }
+    }
+
+    function renderPreview(js, css) {
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>${css}</style>
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "https://esm.sh/preact@10.25.4",
+      "preact/hooks": "https://esm.sh/preact@10.25.4/hooks",
+      "@preact/signals": "https://esm.sh/@preact/signals@1.3.1",
+      "preact-router": "https://esm.sh/preact-router@4.1.2",
+      "pylevate-runtime": "https://esm.sh/preact@10.25.4"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { h, render, Component, Fragment } from 'preact';
+    import { signal, computed, effect, batch } from '@preact/signals';
+
+    function state(v) { return signal(v); }
+    function css() { return null; }
+    function mount(comp, sel) {
+      render(h(comp, null), document.querySelector(sel));
+    }
+    function createTag(tag, cls) {
+      return function(props) {
+        const { children, className, ...rest } = props || {};
+        return h(tag, { className: cls + (className ? ' ' + className : ''), ...rest }, children);
+      };
+    }
+    class Store {}
+    class SlotsEnum {}
+    function action(fn) { return fn; }
+    const game_events = { on(){}, emit(){}, off(){} };
+
+    // Inject baselib
+    if (!globalThis.range) globalThis.range = (a,b,c) => { if(b===undefined){b=a;a=0;} if(!c)c=1; const r=[]; for(let i=a;c>0?i<b:i>b;i+=c)r.push(i); return r; };
+    if (!globalThis.len) globalThis.len = (x) => x?.length ?? Object.keys(x).length;
+    if (!globalThis.print) globalThis.print = console.log;
+
+    try {
+      ${js}
+    } catch(e) {
+      document.getElementById('app').innerHTML = '<pre style="color:red;padding:1rem">' + e.message + '</pre>';
+    }
+  </script>
+</body>
+</html>`;
+      const blob = new Blob([html], { type: 'text/html' });
+      preview.src = URL.createObjectURL(blob);
+    }
+
+    // Keyboard shortcut
+    source.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        compile();
+      }
+      // Tab support
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = source.selectionStart;
+        source.value = source.value.slice(0, start) + '    ' + source.value.slice(source.selectionEnd);
+        source.selectionStart = source.selectionEnd = start + 4;
+      }
+    });
+
+    // Compile button
+    document.getElementById('compile-btn').addEventListener('click', compile);
+
+    // Auto-compile on load
+    compile();
+  </script>
+</body>
+</html>

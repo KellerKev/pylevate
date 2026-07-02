@@ -1,0 +1,20 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PyLevate icon">
+  <defs>
+    <linearGradient id="pl-bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6b7cff"/>
+      <stop offset="1" stop-color="#4a2ea8"/>
+    </linearGradient>
+    <linearGradient id="pl-mark" x1="128" y1="52" x2="128" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e7e9ff"/>
+    </linearGradient>
+  </defs>
+  <!-- app-icon badge -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#pl-bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="black" opacity="0.06"/>
+  <!-- ascending chevrons: the "levate" (lift) motif -->
+  <path d="M128 56 L196 108 L170 108 L128 76 L86 108 L60 108 Z" fill="url(#pl-mark)"/>
+  <path d="M128 104 L196 156 L170 156 L128 124 L86 156 L60 156 Z" fill="url(#pl-mark)" opacity="0.85"/>
+  <!-- lift-off baseline: the object is elevated above it -->
+  <rect x="76" y="182" width="104" height="16" rx="8" fill="#ffffff" opacity="0.55"/>
+</svg>

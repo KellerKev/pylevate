@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    # pixi.toml currently targets osx-arm64 only; macos-14 runners are Apple
+    # silicon. Add linux-64 to [workspace].platforms (and re-lock) to also run
+    # on ubuntu-latest.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          environments: test
+          cache: true
+
+      - name: Run test suite
+        run: pixi run -e test test

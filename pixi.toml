@@ -1,0 +1,27 @@
+[workspace]
+channels = ["conda-forge"]
+name = "pylevate"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[dependencies]
+python = ">=3.10"
+nodejs = ">=20"
+
+[pypi-dependencies]
+typer = ">=0.9"
+rich = ">=13"
+watchdog = ">=3"
+websockets = ">=12"
+
+[tasks]
+dev = "python -m pylevate.cli dev"
+build = "python -m pylevate.cli build"
+test = "python -m pytest tests/ -v"
+init = "python -m pylevate.cli init"
+
+[feature.test.pypi-dependencies]
+pytest = ">=7"
+
+[environments]
+test = ["test"]
