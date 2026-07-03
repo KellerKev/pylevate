@@ -24,6 +24,9 @@ class MyStore(Store):
         # Should NOT emit static fields for signal()
         assert "static count" not in js
         assert "static name" not in js
+        # Public accessors so other modules can read/write store.count
+        assert "get count() { return this._count.value; }" in js
+        assert "set count(v) { this._count.value = v; }" in js
 
     def test_signal_read_becomes_value(self):
         js = _js("""
@@ -138,6 +141,77 @@ class Foo:
 """)
         assert "localStorage.setItem('key', 'value')" in js
 
+    def test_multiline_v_triple_double(self):
+        js = _js('''
+v"""
+const el = document.createElement('div');
+el.textContent = 'hi';
+document.body.appendChild(el);
+"""
+''')
+        assert "const el = document.createElement('div');" in js
+        assert "el.textContent = 'hi';" in js
+        assert "document.body.appendChild(el);" in js
+
+    def test_multiline_v_triple_single(self):
+        js = _js("""
+v'''
+window.addEventListener("resize", () => {
+  console.log("resized");
+});
+'''
+""")
+        assert 'window.addEventListener("resize", () => {' in js
+        assert 'console.log("resized");' in js
+
+    def test_triple_quoted_preserves_backslashes(self):
+        js = _js(r'''
+v"""
+const re = /\d+/;
+const s = 'a\nb';
+"""
+''')
+        assert r"const re = /\d+/;" in js
+        assert r"const s = 'a\nb';" in js
+
+    def test_triple_and_single_line_coexist(self):
+        js = _js('''
+x = v"navigator.onLine"
+v"""
+console.log(1);
+console.log(2);
+"""
+''')
+        assert "navigator.onLine" in js
+        assert "console.log(1);" in js
+        assert "console.log(2);" in js
+
+    def test_multiline_expression_position_parenthesized(self):
+        js = _js('''
+x = v"""fetch('/api')
+  .then(r => r.json())"""
+''')
+        assert "(fetch('/api')" in js
+        assert ".then(r => r.json()))" in js
+
+    def test_multiline_in_method(self):
+        js = _js('''
+class Foo:
+    def setup(self):
+        v"""
+console.log('a');
+console.log('b');
+"""
+''')
+        assert "console.log('a');" in js
+        assert "console.log('b');" in js
+
+    def test_content_ending_in_quote(self):
+        js = _js("""
+v'''alert("done")'''
+""")
+        assert 'alert("done")' in js
+
 
 class TestClassInstantiation:
     def test_new_keyword_added(self):
@@ -177,6 +251,26 @@ class Card(Component):
         assert "get_context" in js
         assert "_ctx" in js  # context variable
         assert "render(" in js
+        # Derived keys added by get_context must be bound as locals so
+        # [[upper_title]] resolves (title itself is already destructured).
+        assert "const { upper_title } = _ctx;" in js
+
+    def test_derived_context_keys_without_init(self):
+        js = _js("""
+from pylevate import Component, h
+
+class Page(Component):
+    def get_context(self, props):
+        props['display_name'] = props.get('user') or 'Loading'
+        props['count'] = 1
+        return props
+
+    template = {
+        h.div(): '[[display_name]] [[count]]',
+    }
+""")
+        assert "const _ctx = this.get_context(props || {});" in js
+        assert "const { display_name, count } = _ctx;" in js
 
 
 class TestDuplicateImports:

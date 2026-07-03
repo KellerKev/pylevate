@@ -55,6 +55,9 @@ def init(
 ) -> None:
     """Scaffold a new PyLevate project."""
     valid_templates = ("app", "game", "hybrid", "dashboard")
+    # Compilation mode per template — the dashboard template is an app-mode
+    # project (Config.mode has no "dashboard" value).
+    template_modes = {"app": "app", "game": "game", "hybrid": "hybrid", "dashboard": "app"}
     if template not in valid_templates:
         console.print(
             f"[red]Unknown template '[bold]{template}[/bold]'. "
@@ -69,9 +72,9 @@ def init(
         console.print(f"[red]Directory '{name}' already exists.[/red]")
         raise typer.Exit(code=1)
 
-    if not template_dir.exists():
+    if not template_dir.exists() or not any(template_dir.iterdir()):
         console.print(
-            f"[red]Template directory not found: {template_dir}[/red]"
+            f"[red]Template directory not found or empty: {template_dir}[/red]"
         )
         raise typer.Exit(code=1)
 
@@ -80,13 +83,14 @@ def init(
         shutil.copytree(template_dir, project_dir)
 
     # -- Write pylevate.config.py ------------------------------------------
+    mode = template_modes[template]
     config_content = (
         '"""PyLevate project configuration."""\n'
         "\n"
         "from pylevate.config import Config\n"
         "\n"
         "config = Config(\n"
-        f'    mode="{template}",\n'
+        f'    mode="{mode}",\n'
         f'    entry="main.py",\n'
         f'    out_dir="dist/",\n'
         f"    dev_port=3000,\n"
@@ -101,7 +105,7 @@ def init(
 
         cap = CapacitorProject(
             project_dir=project_dir,
-            config=Config(mode=template, entry="main.py", out_dir="dist/"),
+            config=Config(mode=mode, entry="main.py", out_dir="dist/"),
         )
         write_capacitor_config(cap)
         update_package_json(project_dir, ["ios"])
@@ -243,6 +247,9 @@ def build(
     analyze: bool = typer.Option(
         False, "--analyze", help="Show bundle size analysis after build."
     ),
+    no_minify: bool = typer.Option(
+        False, "--no-minify", help="Skip minification and asset hashing."
+    ),
 ) -> None:
     """Create a production build."""
     valid_targets = ("web", "capacitor", "all")
@@ -264,11 +271,16 @@ def build(
     for tgt in targets:
         with console.status(f"[cyan]Building for {tgt}..."):
             try:
-                pipeline = Pipeline(project_dir=project_dir, config=config)
+                pipeline = Pipeline(
+                    project_dir=project_dir, config=config, production=not no_minify
+                )
                 result = pipeline.build(target=tgt)
             except Exception as exc:
                 console.print(f"[red]Build failed ({tgt}): {exc}[/red]")
                 raise typer.Exit(code=1) from exc
+
+        for warning in result.warnings:
+            console.print(f"[yellow]warning: {warning}[/yellow]")
 
         if not result.success:
             for err in result.errors:

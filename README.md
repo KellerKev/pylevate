@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![CI](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml/badge.svg)](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)](#development)
 [![Bundle](https://img.shields.io/badge/app%20bundle-~12KB%20gzip-blue)](#how-the-compiler-works)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -44,7 +44,7 @@ That compiles to a ~12KB gzipped Preact bundle -- no virtual DOM diffing of Pyth
 - **Reactive by default.** `state()` and `store()` build on `@preact/signals` for fine-grained updates without a virtual-DOM re-render.
 - **pygame in the browser.** Write `pygame`-style game loops; they hoist into Phaser's render loop automatically.
 - **Mobile from day one.** `--mobile` wires up Capacitor so the same code base builds for iOS and Android.
-- **Fast dev loop.** Hot module reload, scoped CSS, and a zero-config playground you can run with a single command.
+- **Fast dev loop.** Live reload with store-state restore and a compile-error overlay, scoped CSS, and a zero-config playground you can run with a single command.
 
 ---
 
@@ -364,7 +364,29 @@ class CartStore(Store):
 cart = CartStore()
 ```
 
-The `v"..."` syntax is a verbatim JS literal -- the escape hatch for browser APIs that have no Python equivalent.
+The `v"..."` syntax is a verbatim JS literal -- the escape hatch for browser APIs that have no Python equivalent. For multi-line JS, use the triple-quoted form:
+
+```python
+@effect
+def persist(self):
+    v"""
+    const payload = JSON.stringify(this.items.value);
+    localStorage.setItem('cart', payload);
+    """
+```
+
+Backslashes inside triple-quoted verbatim JS are preserved as written (regexes like `/\d+/` survive intact).
+
+### Calling JavaScript APIs from Python
+
+Keyword arguments always compile to a **single trailing object literal**:
+
+```python
+Card(title='Hello', elevated=True)   # → h(Card, {title: 'Hello', elevated: true})
+fetch('/api', method='POST')         # → fetch('/api', {method: 'POST'})
+```
+
+That convention is right for PyLevate components and stores, and happens to be right for `fetch` -- but most native JS APIs take positional arguments. The compiler emits a **warning** when kwargs are passed to a call rooted at a known JS global (`document`, `window`, `Math`, `setTimeout`, ...). Where the object form isn't what the API expects, use positional arguments, pass a dict literal explicitly, or drop to a `v"..."` verbatim literal.
 
 ### Template Syntax
 
@@ -541,6 +563,13 @@ class Profile(Component):
 ```
 
 Routing compiles to `preact-router` under the hood. Users never import from `preact-router` directly.
+
+- Route params (`:id`) arrive as props on the page component -- read them in `get_context(props)`.
+- `@page(title=...)` sets `document.title` when the route becomes active.
+- Plain `h.a(href='/dashboard')` anchors navigate client-side; no special Link component needed.
+- The dev server serves `index.html` for extensionless paths, so deep links like `/profile/42` work out of the box. Configure equivalent history-API fallback on your production host.
+
+The `dashboard` template (`pylevate init my-app --template dashboard`) is a working routed app: pages, shared nav component, route params, and a cross-page store.
 
 ---
 
@@ -853,13 +882,21 @@ Scaffold a new project.
 
 ### `pylevate dev`
 
-Start the dev server with file watching and HMR.
+Start the dev server with file watching and live reload.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port`, `-p` | `3000` | Dev server port |
 | `--hmr-port` | `3001` | HMR WebSocket port |
 | `--open`, `-o` | `false` | Open browser on start |
+
+On every `.py` save the project is rebuilt and the page reloads; `.css` changes refresh stylesheets in place. The reload is designed to land you back where you were:
+
+- **Route** -- preserved via the URL (with routing enabled).
+- **Store state** -- JSON-serializable signal values of every `Store` are snapshotted to `sessionStorage` before the reload and restored after it. This machinery is compiled out of production bundles.
+- **Not preserved** -- component-local `state()` fields, non-JSON store values, and game-mode state (Phaser restarts cleanly by design).
+
+Compile errors appear as a full-screen overlay in the browser (with file/line) and dismiss automatically when fixed.
 
 ### `pylevate playground`
 
@@ -871,13 +908,14 @@ Launch the interactive, zero-config playground -- write PyLevate in the browser 
 
 ### `pylevate build`
 
-Create a production build.
+Create a production build: minified bundles with content-hashed file names (`main-<hash>.js`), and `index.html` rewritten to reference them -- so output can be served with long-lived cache headers. CDN references (e.g. Phaser) are left untouched.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--target`, `-t` | `web` | Build target: `web`, `capacitor`, `all` |
 | `--out-dir`, `-o` | `dist/` | Output directory |
 | `--analyze` | `false` | Show bundle size analysis |
+| `--no-minify` | `false` | Skip minification and asset hashing |
 
 ### `pylevate mobile init <platform>`
 
@@ -1099,17 +1137,23 @@ pixi install
 pixi run -e test test
 ```
 
-109 tests across 7 test files, running in ~0.04s:
+157 tests across 11 test files:
 
 | Test File | Count | Covers |
 |-----------|-------|--------|
-| `tests/compiler/test_py2js.py` | 33 | Core Python-to-JS compilation |
-| `tests/compiler/test_components.py` | 21 | Component class compilation |
+| `tests/compiler/test_py2js.py` | 46 | Core Python-to-JS compilation, import resolution |
+| `tests/compiler/test_components.py` | 23 | Component class compilation |
+| `tests/compiler/test_stores.py` | 21 | Store, computed, action, effect, v-strings |
 | `tests/compiler/test_templates.py` | 15 | Template dict syntax |
-| `tests/compiler/test_stores.py` | 13 | Store, computed, action, effect |
 | `tests/compiler/test_native_bridge.py` | 11 | Capacitor import/method rewriting |
 | `tests/compiler/test_loop_hoister.py` | 10 | Game loop restructuring |
+| `tests/compiler/test_warnings.py` | 7 | Compile warnings (kwargs on native JS APIs) |
+| `tests/compiler/test_html_rewrite.py` | 7 | Production HTML asset-hash rewriting |
 | `tests/compiler/test_css_scoper.py` | 6 | CSS class name scoping |
+| `tests/integration/test_pipeline_e2e.py` | 6 | Full pipeline: template → compile → esbuild bundle |
+| `tests/compiler/test_routing.py` | 5 | Golden codegen shapes for App/Router/@page |
+
+The integration tests bundle real template projects through npm/esbuild; they skip automatically when node or npm is unavailable.
 
 ### Pixi tasks
 

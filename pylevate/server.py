@@ -22,33 +22,16 @@ from pylevate.config import Config
 console = Console()
 
 # ---------------------------------------------------------------------------
-# HMR script injected into every HTML response
+# HMR client injection: a tiny snippet that loads the full client
+# (js/hmr-client.js — reload, CSS refresh, and compile-error overlay),
+# served by this dev server at /__pylevate/hmr-client.js.
 # ---------------------------------------------------------------------------
 
+_FRAMEWORK_JS_DIR = Path(__file__).resolve().parent.parent / "js"
+
 HMR_CLIENT_SCRIPT = """\
-<script>
-(function() {
-  const ws = new WebSocket("ws://localhost:__HMR_PORT__");
-  ws.onmessage = function(event) {
-    const data = JSON.parse(event.data);
-    if (data.type === "reload") {
-      console.log("[PyLevate HMR] full reload");
-      location.reload();
-    } else if (data.type === "css") {
-      document.querySelectorAll('link[rel="stylesheet"]').forEach(function(link) {
-        const url = new URL(link.href);
-        url.searchParams.set("_hmr", Date.now());
-        link.href = url.toString();
-      });
-      console.log("[PyLevate HMR] CSS updated");
-    }
-  };
-  ws.onclose = function() {
-    console.log("[PyLevate HMR] connection lost — retrying in 2s");
-    setTimeout(function() { location.reload(); }, 2000);
-  };
-})();
-</script>
+<script>window.__PYLEVATE_HMR_PORT__ = __HMR_PORT__;</script>
+<script src="/__pylevate/hmr-client.js"></script>
 """
 
 # ---------------------------------------------------------------------------
@@ -84,9 +67,10 @@ class _HMRHTTPRequestHandler(SimpleHTTPRequestHandler):
                     "js": result.js,
                     "css": "\n".join(result.css_chunks),
                     "errors": [str(e) for e in result.errors],
+                    "warnings": [str(w) for w in result.warnings],
                 }
             except Exception as exc:
-                response = {"js": "", "css": "", "errors": [str(exc)]}
+                response = {"js": "", "css": "", "errors": [str(exc)], "warnings": []}
 
             payload = json.dumps(response).encode("utf-8")
             self.send_response(HTTPStatus.OK)
@@ -108,10 +92,30 @@ class _HMRHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        # The HMR client is served from the framework install, not the project.
+        if self.path.split("?")[0] == "/__pylevate/hmr-client.js":
+            try:
+                body = (_FRAMEWORK_JS_DIR / "hmr-client.js").read_bytes()
+            except OSError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         path = self.translate_path(self.path)
         # Serve index.html for directory requests
         if Path(path).is_dir():
             path = str(Path(path) / "index.html")
+
+        # History-API fallback: extensionless paths (client-side routes like
+        # /settings/profile) fall back to the SPA's index.html.
+        if not Path(path).exists() and not Path(path).suffix:
+            path = self.translate_path("/index.html")
 
         try:
             content = Path(path).read_bytes()
@@ -315,6 +319,9 @@ class DevServer:
 
             elapsed = (_time.perf_counter() - t0) * 1000
 
+            for warning in result.warnings:
+                console.print(f"  [yellow]warning: {warning}[/yellow]")
+
             if not result.success:
                 for err in result.errors:
                     console.print(f"  [red]{err}[/red]")
@@ -341,15 +348,26 @@ class DevServer:
 
     async def _notify_error(self, errors: list[str]) -> None:
         import json
+        import re
 
-        # Send first error to the overlay
+        # Send first error to the overlay. Compile errors are formatted as
+        # "file:line:col: message" (CompileError.__str__) or "file: message".
         message = errors[0] if errors else "Unknown error"
+        file, line, col = "", 0, 0
+        m = re.match(r"^(?P<file>[^:\n]+):(?P<line>\d+):(?P<col>\d+): (?P<msg>.*)", message, re.DOTALL)
+        if m:
+            file, line, col = m.group("file"), int(m.group("line")), int(m.group("col"))
+            message = m.group("msg")
+        else:
+            m = re.match(r"^(?P<file>[^:\n]+\.py): (?P<msg>.*)", message, re.DOTALL)
+            if m:
+                file, message = m.group("file"), m.group("msg")
         payload = json.dumps({
             "type": "error",
             "message": message,
-            "file": "",
-            "line": 0,
-            "col": 0,
+            "file": file,
+            "line": line,
+            "col": col,
         })
         await self._broadcast(payload)
 

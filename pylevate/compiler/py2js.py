@@ -11,6 +11,7 @@ Public API:
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
 import textwrap
 from dataclasses import dataclass, field
@@ -40,6 +41,20 @@ class CompileResult:
     source_map: dict | None = None
     errors: list[CompileError] = field(default_factory=list)
     css_chunks: list[str] = field(default_factory=list)
+    warnings: list[CompileError] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ImportContext:
+    """Project context for resolving local imports.
+
+    Without a context (playground, tests, single-file compiles) the resolver
+    assumes the importer sits at the project root and skips validation.
+    """
+    rel_path: str | None = None            # importer's project-relative posix path, e.g. "pages/home.py"
+    modules: frozenset[str] = frozenset()  # dotted names of resolvable modules: {"main", "pages.home", "utils"}
+    packages: frozenset[str] = frozenset() # dotted names of dirs containing __init__.py: {"components"}
+    validate: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +216,20 @@ _AUGASSIGN_MAP = {
 
 
 # ---------------------------------------------------------------------------
+# Native JS globals: kwargs on calls rooted here trigger a compile warning,
+# since the trailing-object convention rarely matches their signatures.
+# ---------------------------------------------------------------------------
+
+_JS_NATIVE_ROOTS: frozenset[str] = frozenset({
+    "window", "document", "console", "Math", "JSON", "Promise", "fetch",
+    "localStorage", "sessionStorage", "navigator", "history", "location",
+    "Date", "RegExp", "URL", "URLSearchParams", "Intl", "crypto",
+    "performance", "setTimeout", "setInterval", "clearTimeout",
+    "clearInterval", "requestAnimationFrame", "WebSocket", "Audio", "Image",
+})
+
+
+# ---------------------------------------------------------------------------
 # Template attribute name mapping (Python → JS/HTML)
 # ---------------------------------------------------------------------------
 
@@ -229,10 +258,12 @@ _TEMPLATE_ATTR_MAP: dict[str, str] = {
 class _JSEmitter(ast.NodeVisitor):
     """Walk a Python AST and emit JavaScript source code."""
 
-    def __init__(self, filename: str, mode: str):
+    def __init__(self, filename: str, mode: str, import_ctx: ImportContext | None = None):
         self.filename = filename
         self.mode = mode  # "app" | "game" | "hybrid"
+        self.import_ctx = import_ctx or ImportContext()
         self.errors: list[CompileError] = []
+        self.warnings: list[CompileError] = []
         self.css_chunks: list[str] = []
         self._indent = 0
         self._lines: list[str] = []
@@ -247,12 +278,21 @@ class _JSEmitter(ast.NodeVisitor):
         self._class_init_props: dict[str, list[tuple[str, str | None]]] = {}  # class -> [(name, default)]
         self._class_effect_methods: dict[str, list[str]] = {}  # class -> [method_names]
         self._class_has_get_context: dict[str, bool] = {}  # class -> has get_context?
+        self._class_context_keys: dict[str, list[str]] = {}  # class -> keys get_context adds to props
         self._declared_vars: list[set[str]] = [set()]  # stack of scopes
 
     # -- Helpers -----------------------------------------------------------
 
     def _error(self, node: ast.AST, msg: str) -> None:
         self.errors.append(CompileError(
+            file=self.filename,
+            line=getattr(node, "lineno", 0),
+            col=getattr(node, "col_offset", 0),
+            message=msg,
+        ))
+
+    def _warn(self, node: ast.AST, msg: str) -> None:
+        self.warnings.append(CompileError(
             file=self.filename,
             line=getattr(node, "lineno", 0),
             col=getattr(node, "col_offset", 0),
@@ -286,9 +326,60 @@ class _JSEmitter(ast.NodeVisitor):
 
     # -- Imports -----------------------------------------------------------
 
+    def _importer_base_parts(self) -> tuple[str, ...]:
+        """Directory of the importing module as dotted-path parts ('' → root)."""
+        rel = self.import_ctx.rel_path
+        if not rel:
+            return ()
+        parent = posixpath.dirname(rel)
+        return tuple(p for p in parent.split("/") if p)
+
+    def _resolve_import(self, module: str, level: int, node: ast.AST) -> str | None:
+        """Resolve a Python module reference to a JS import specifier.
+
+        Returns None when the import should not be emitted (stdlib elide is
+        signalled by the '__stdlib__' sentinel; hard failures append an error).
+        """
+        if level == 0:
+            mapped = _map_module(module)
+            if not mapped.startswith("./"):
+                # pylevate-* runtime package or __stdlib__ sentinel
+                return mapped
+            target = module.split(".")
+        else:
+            base = self._importer_base_parts()
+            if level - 1 > len(base):
+                self._error(node, f"Relative import '{'.' * level}{module}' reaches beyond the project root")
+                return None
+            kept = base[: len(base) - (level - 1)] if level > 1 else base
+            target = list(kept) + (module.split(".") if module else [])
+
+        dotted = ".".join(target)
+        ctx = self.import_ctx
+        if dotted in ctx.packages:
+            target = target + ["__init__"]
+        elif ctx.validate and dotted not in ctx.modules:
+            expected = "/".join(t for t in target if t)
+            self._error(
+                node,
+                f"Cannot resolve import '{dotted}' — expected {expected}.py or {expected}.js "
+                f"in the project. Local imports must match a source file; "
+                f"framework imports must start with 'pylevate'.",
+            )
+            return None
+
+        target_path = "/".join(target) + ".js"
+        base_dir = "/".join(self._importer_base_parts())
+        rel = posixpath.relpath(target_path, base_dir) if base_dir else target_path
+        if not rel.startswith("."):
+            rel = f"./{rel}"
+        return rel
+
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            js_mod = _map_module(alias.name)
+            js_mod = self._resolve_import(alias.name, 0, node)
+            if js_mod is None:
+                continue
             if js_mod == "__stdlib__":
                 self._emit(f"// stdlib: {alias.name} (shimmed by baselib)")
                 continue
@@ -297,14 +388,29 @@ class _JSEmitter(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
-        js_mod = _map_module(module)
+        if node.level > 0 and not module:
+            # `from . import nav` / `from .. import x`: each alias is a module.
+            for alias in node.names:
+                js_mod = self._resolve_import(alias.name, node.level, node)
+                if js_mod is None or js_mod == "__stdlib__":
+                    continue
+                local = alias.asname or alias.name
+                self._emit(f"import * as {local} from '{js_mod}';")
+            return
+        js_mod = self._resolve_import(module, node.level, node)
+        if js_mod is None:
+            return
         if js_mod == "__stdlib__":
             self._emit(f"// stdlib: {module} (shimmed by baselib)")
             return
         names = []
         for alias in node.names:
             if alias.name == "*":
-                self._emit(f"import * from '{js_mod}';")
+                self._error(
+                    node,
+                    f"'from {module} import *' is not supported — "
+                    f"JavaScript modules have no star re-export into scope; import names explicitly",
+                )
                 return
             local = alias.asname or alias.name
             if local != alias.name:
@@ -326,6 +432,7 @@ class _JSEmitter(ast.NodeVisitor):
         self._class_init_props[cname] = []
         self._class_effect_methods[cname] = []
         self._class_has_get_context[cname] = False
+        self._class_context_keys[cname] = []
 
         # Detect if this class extends Component, Store, or Tag
         is_component = any(
@@ -368,6 +475,7 @@ class _JSEmitter(ast.NodeVisitor):
                         self._class_effect_methods[cname].append(item.name)
                 if item.name == "get_context":
                     self._class_has_get_context[cname] = True
+                    self._class_context_keys[cname] = self._extract_context_keys(item)
                 if item.name == "template_factory":
                     # template_factory returns a template dict — handle at emit time
                     pass
@@ -429,6 +537,14 @@ class _JSEmitter(ast.NodeVisitor):
                     for eff_name in effect_methods:
                         self._emit(f"effect(() => this.{eff_name}());")
                 self._emit("}")
+
+            # Public accessors for signal fields: internal reads are rewritten
+            # to this._x.value at compile time, but cross-module consumers
+            # (store.count from another file) need real properties.
+            if state_fields and self.mode in ("app", "hybrid"):
+                for fname, _ in state_fields:
+                    self._emit(f"get {fname}() {{ return this._{fname}.value; }}")
+                    self._emit(f"set {fname}(v) {{ this._{fname}.value = v; }}")
 
             for item in node.body:
                 # Skip class-level state() and css() assignments (handled above)
@@ -526,6 +642,32 @@ class _JSEmitter(ast.NodeVisitor):
                 props.append((name, None))
         return props
 
+    def _extract_context_keys(self, func_node: ast.FunctionDef) -> list[str]:
+        """Collect string keys that get_context assigns onto its props param.
+
+        `props['chevron'] = ...` adds a derived value the template can
+        reference as [[chevron]]; render() must destructure those keys from
+        the get_context result so the interpolation resolves.
+        """
+        params = [a.arg for a in func_node.args.args]
+        props_param = params[1] if len(params) > 1 else None
+        if props_param is None:
+            return []
+        keys: list[str] = []
+        for stmt in ast.walk(func_node):
+            if not isinstance(stmt, ast.Assign):
+                continue
+            for target in stmt.targets:
+                if (isinstance(target, ast.Subscript)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == props_param
+                        and isinstance(target.slice, ast.Constant)
+                        and isinstance(target.slice.value, str)
+                        and target.slice.value.isidentifier()
+                        and target.slice.value not in keys):
+                    keys.append(target.slice.value)
+        return keys
+
     def _emit_render_from_template(self, template_dict: ast.Dict) -> None:
         """Compile a template dict into a render() method with h() calls."""
         self._emit("render(props, state, context) {")
@@ -546,6 +688,15 @@ class _JSEmitter(ast.NodeVisitor):
                     self._emit(f"({{ {', '.join(p[0] for p in init_props)}, ...rest }} = _ctx);")
                 else:
                     self._emit("const _ctx = this.get_context(props || {});")
+                # Bind derived keys get_context added so [[key]] interpolations
+                # resolve as locals (init props are already destructured above).
+                init_prop_names = {p[0] for p in init_props}
+                ctx_keys = [
+                    k for k in self._class_context_keys.get(self._in_class, [])
+                    if k not in init_prop_names
+                ]
+                if ctx_keys:
+                    self._emit(f"const {{ {', '.join(ctx_keys)} }} = _ctx;")
 
             # Children from parent (passed as props.children by Preact)
             self._emit("const children = props && props.children;")
@@ -2018,6 +2169,7 @@ class _JSEmitter(ast.NodeVisitor):
                 kw_parts.append(f"{kw.arg}: {self._expr(kw.value)}")
 
         if kw_parts:
+            self._maybe_warn_native_kwargs(node)
             positional = [self._expr(a) for a in node.args]
             spreads = [f"...{self._expr(kw.value)}" for kw in node.keywords if kw.arg is None]
 
@@ -2030,6 +2182,31 @@ class _JSEmitter(ast.NodeVisitor):
             return ", ".join(all_parts)
 
         return ", ".join(parts)
+
+    def _maybe_warn_native_kwargs(self, node: ast.Call) -> None:
+        """Warn when kwargs are passed to a call rooted at a native JS global.
+
+        Kwargs always compile to a single trailing object literal, which is
+        the PyLevate convention for components/stores but is generally wrong
+        for native browser/JS APIs that expect positional arguments.
+        """
+        func = node.func
+        while isinstance(func, ast.Attribute):
+            func = func.value
+        if not isinstance(func, ast.Name):
+            return
+        root = func.id
+        if root not in _JS_NATIVE_ROOTS:
+            return
+        kw_example = next(kw.arg for kw in node.keywords if kw.arg is not None)
+        self._warn(
+            node,
+            f"Keyword arguments compile to a single trailing object literal "
+            f"(…, {{{kw_example}: …}}), but '{root}' is a native JS API that "
+            f"generally takes positional arguments. If the object form is what "
+            f"you want, pass a dict literal explicitly; otherwise use positional "
+            f"arguments or a v\"...\" verbatim JS literal.",
+        )
 
     # --- Python-style truthiness -----------------------------
     # Empty collections are falsy in Python but truthy in JS. Wrap boolean-context
@@ -2311,10 +2488,32 @@ class _IndentContext:
 
 _V_LITERAL_RE = re.compile(r'\bv"((?:[^"\\]|\\.)*)"')
 _V_LITERAL_SINGLE_RE = re.compile(r"\bv'((?:[^'\\]|\\.)*)'")
+# Triple-quoted (multi-line) forms. Must be applied before the single-line
+# regexes, which would otherwise mis-match v""" as v"" plus garbage.
+_V_TRIPLE_DQ_RE = re.compile(r'\bv"""(.*?)"""', re.DOTALL)
+_V_TRIPLE_SQ_RE = re.compile(r"\bv'''(.*?)'''", re.DOTALL)
+
+
+def _make_triple_replacer(quotes: str):
+    def _replace(match: re.Match) -> str:
+        content = match.group(1)
+        # A raw triple-quoted Python string cannot end with a backslash or a
+        # quote character adjacent to the closing quotes; a trailing newline
+        # is harmless in verbatim JS and sidesteps both cases.
+        if content.endswith("\\") or content.endswith(quotes[0]):
+            content += "\n"
+        return f"__raw_js__(r{quotes}{content}{quotes})"
+    return _replace
 
 
 def _rewrite_v_literals(source: str) -> str:
-    """Rewrite v"..." and v'...' to __raw_js__("...") so Python's parser accepts them."""
+    """Rewrite v"..." / v'...' / v\"\"\"...\"\"\" to __raw_js__(...) so Python's parser accepts them.
+
+    Triple-quoted forms may span multiple lines and are wrapped as raw strings
+    so backslashes inside the JS (regexes, escape sequences) survive intact.
+    """
+    source = _V_TRIPLE_DQ_RE.sub(_make_triple_replacer('"""'), source)
+    source = _V_TRIPLE_SQ_RE.sub(_make_triple_replacer("'''"), source)
     source = _V_LITERAL_RE.sub(r'__raw_js__("\1")', source)
     source = _V_LITERAL_SINGLE_RE.sub(r"__raw_js__('\1')", source)
     return source
@@ -2397,14 +2596,19 @@ def compile_source(
     source: str,
     filename: str = "<stdin>",
     mode: str = "app",
+    *,
+    import_ctx: ImportContext | None = None,
 ) -> CompileResult:
     """
     Compile Python source code to JavaScript.
 
     Args:
-        source:   Python source code string.
-        filename: Name of the source file (for error messages).
-        mode:     Compilation mode — "app", "game", or "hybrid".
+        source:     Python source code string.
+        filename:   Name of the source file (for error messages).
+        mode:       Compilation mode — "app", "game", or "hybrid".
+        import_ctx: Project context for local-import resolution/validation.
+                    When omitted, the importer is assumed to sit at the
+                    project root and import targets are not validated.
 
     Returns:
         CompileResult with the generated JS, any CSS chunks found, and errors.
@@ -2427,7 +2631,7 @@ def compile_source(
         return CompileResult(js="", errors=errors)
 
     # Emit
-    emitter = _JSEmitter(filename=filename, mode=mode)
+    emitter = _JSEmitter(filename=filename, mode=mode, import_ctx=import_ctx)
 
     # Inject __raw_js__ handler: the emitter treats calls to __raw_js__(str) as raw JS
     _patch_raw_js_support(emitter)
@@ -2443,25 +2647,45 @@ def compile_source(
         source_map=None,  # TODO: source map generation
         errors=errors,
         css_chunks=emitter.css_chunks,
+        warnings=emitter.warnings,
     )
+
+
+def _raw_js_payload(node: ast.AST) -> str | None:
+    """Return the raw-JS string if *node* is a __raw_js__("...") call, else None."""
+    if (isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "__raw_js__"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)):
+        return node.args[0].value
+    return None
 
 
 def _patch_raw_js_support(emitter: _JSEmitter) -> None:
     """Patch the emitter so __raw_js__("code") emits raw JS."""
     original_expr_call = emitter._expr_Call
+    original_visit_expr = emitter.visit_Expr
 
     def patched_expr_call(node: ast.Call) -> str:
-        # Intercept __raw_js__("...") calls
-        if (isinstance(node.func, ast.Name)
-                and node.func.id == "__raw_js__"
-                and len(node.args) == 1
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)):
-            return node.args[0].value
-
+        payload = _raw_js_payload(node)
+        if payload is not None:
+            # Multi-line raw JS in expression position needs parentheses so
+            # constructs like object literals or IIFEs parse unambiguously.
+            return f"({payload})" if "\n" in payload else payload
         return original_expr_call(node)
 
+    def patched_visit_expr(node: ast.Expr) -> None:
+        # Statement-position raw JS is emitted verbatim (no wrapping parens).
+        payload = _raw_js_payload(node.value)
+        if payload is not None:
+            emitter._emit(f"{payload};")
+            return
+        original_visit_expr(node)
+
     emitter._expr_Call = patched_expr_call
+    emitter.visit_Expr = patched_visit_expr
 
 
 # ---------------------------------------------------------------------------

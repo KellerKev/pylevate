@@ -18,6 +18,10 @@ class BundleResult:
     errors: list[str] = field(default_factory=list)
     output_files: list[Path] = field(default_factory=list)
     bundle_size: int = 0
+    # Per-output metadata from esbuild's metafile:
+    # {"path", "bytes", "entryPoint", "cssBundle"} — used to map entry names
+    # to hashed output names for index.html rewriting.
+    outputs_meta: list[dict] = field(default_factory=list)
 
 
 def _generate_runner_script(
@@ -60,6 +64,18 @@ def _generate_runner_script(
     # even when the runtime JS files live outside the project tree.
     node_modules_dir = (build_tmp.parent / "node_modules").as_posix()
 
+    # Production builds get content-hashed file names for cache busting;
+    # dev builds keep stable names so index.html and the HMR flow work as-is.
+    naming_opts = ""
+    if production:
+        naming_opts = (
+            '    entryNames: "[name]-[hash]",\n'
+            '    chunkNames: "chunks/[name]-[hash]",\n'
+            '    assetNames: "assets/[name]-[hash]",\n'
+        )
+
+    dev_define = json.dumps({"__PYLEVATE_DEV__": "false" if production else "true"})
+
     script = textwrap.dedent(f"""\
         import esbuild from "esbuild";
 
@@ -72,7 +88,8 @@ def _generate_runner_script(
             treeShaking: true,
             sourcemap: true,
             minify: {json.dumps(production)},
-            alias: {json.dumps(alias)},
+            define: {dev_define},
+        {naming_opts}    alias: {json.dumps(alias)},
             external: {json.dumps(external)},
             inject: [{json.dumps(baselib_path)}],
             nodePaths: [{json.dumps(node_modules_dir)}],
@@ -84,6 +101,8 @@ def _generate_runner_script(
         const outputs = Object.entries(result.metafile.outputs).map(([p, meta]) => ({{
             path: p,
             bytes: meta.bytes,
+            entryPoint: meta.entryPoint || null,
+            cssBundle: meta.cssBundle || null,
         }}));
         const totalBytes = outputs.reduce((sum, o) => sum + o.bytes, 0);
         console.log(JSON.stringify({{
@@ -174,7 +193,8 @@ def bundle(
         log.error("Failed to parse esbuild output: %s", exc)
         return BundleResult(success=False, errors=[f"Malformed esbuild output: {exc}"])
 
-    output_files = [Path(o["path"]) for o in payload.get("outputs", [])]
+    outputs_meta = payload.get("outputs", [])
+    output_files = [Path(o["path"]) for o in outputs_meta]
     total_bytes = payload.get("totalBytes", 0)
     errors = payload.get("errors", [])
     warnings = payload.get("warnings", [])
@@ -187,4 +207,5 @@ def bundle(
         errors=errors,
         output_files=output_files,
         bundle_size=total_bytes,
+        outputs_meta=outputs_meta,
     )

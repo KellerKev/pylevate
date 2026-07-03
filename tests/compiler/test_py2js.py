@@ -1,12 +1,19 @@
 """Tests for the Python-to-JavaScript compiler."""
 
 import pytest
-from pylevate.compiler.py2js import compile_source, CompileResult
+from pylevate.compiler.py2js import compile_source, CompileResult, ImportContext
 
 
 def _js(source: str, mode: str = "app") -> str:
     """Compile and return JS, stripping trailing whitespace."""
     result = compile_source(source, "test.py", mode)
+    assert not result.errors, f"Unexpected errors: {result.errors}"
+    return result.js.strip()
+
+
+def _js_ctx(source: str, ctx: ImportContext, mode: str = "app") -> str:
+    """Compile with an import context and return JS."""
+    result = compile_source(source, ctx.rel_path or "test.py", mode, import_ctx=ctx)
     assert not result.errors, f"Unexpected errors: {result.errors}"
     return result.js.strip()
 
@@ -23,6 +30,91 @@ class TestImports:
     def test_relative_import(self):
         js = _js("from components.button import Button")
         assert "import { Button } from './components/button.js'" in js
+
+
+class TestNestedImports:
+    def test_nested_importer_parent_hop(self):
+        ctx = ImportContext(rel_path="pages/home.py")
+        js = _js_ctx("from components.nav import Navbar", ctx)
+        assert "import { Navbar } from '../components/nav.js'" in js
+
+    def test_nested_importer_same_dir(self):
+        ctx = ImportContext(rel_path="pages/about.py")
+        js = _js_ctx("from pages.home import Home", ctx)
+        assert "import { Home } from './home.js'" in js
+
+    def test_deeply_nested_relative_sibling_package(self):
+        # `..` from pages/admin/panel.py resolves against `pages` (Python semantics)
+        ctx = ImportContext(rel_path="pages/admin/panel.py")
+        js = _js_ctx("from ..components.nav import Nav", ctx)
+        assert "import { Nav } from '../components/nav.js'" in js
+
+    def test_deeply_nested_relative_to_root(self):
+        ctx = ImportContext(rel_path="pages/admin/panel.py")
+        js = _js_ctx("from ...components.nav import Nav", ctx)
+        assert "import { Nav } from '../../components/nav.js'" in js
+
+    def test_from_dot_import_module(self):
+        ctx = ImportContext(rel_path="components/__init__.py")
+        js = _js_ctx("from . import nav", ctx)
+        assert "import * as nav from './nav.js'" in js
+
+    def test_from_dot_named_import(self):
+        ctx = ImportContext(rel_path="components/nav.py")
+        js = _js_ctx("from .icons import Icon", ctx)
+        assert "import { Icon } from './icons.js'" in js
+
+    def test_package_init_import(self):
+        ctx = ImportContext(
+            rel_path="main.py",
+            modules=frozenset({"main"}),
+            packages=frozenset({"components"}),
+            validate=True,
+        )
+        js = _js_ctx("from components import Navbar", ctx)
+        assert "import { Navbar } from './components/__init__.js'" in js
+
+    def test_nested_dotted_plain_import(self):
+        ctx = ImportContext(rel_path="pages/home.py")
+        js = _js_ctx("import components.nav", ctx)
+        assert "import * as nav from '../components/nav.js'" in js
+
+    def test_relative_beyond_root_errors(self):
+        ctx = ImportContext(rel_path="pages/home.py")
+        result = compile_source("from ...deep import x", "pages/home.py", import_ctx=ctx)
+        assert result.errors
+        assert "beyond the project root" in str(result.errors[0])
+
+    def test_no_context_fallback_unchanged(self):
+        js = _js("from components.button import Button")
+        assert "'./components/button.js'" in js
+
+    def test_unknown_import_friendly_error(self):
+        ctx = ImportContext(
+            rel_path="main.py",
+            modules=frozenset({"main"}),
+            validate=True,
+        )
+        result = compile_source("from missing.mod import X", "main.py", import_ctx=ctx)
+        assert result.errors
+        msg = str(result.errors[0])
+        assert "missing.mod" in msg
+        assert "missing/mod.py" in msg
+        assert "main.py" in msg
+
+    def test_js_source_satisfies_import(self):
+        ctx = ImportContext(
+            rel_path="main.py",
+            modules=frozenset({"main", "utils"}),
+            validate=True,
+        )
+        js = _js_ctx("from utils import helper", ctx)
+        assert "import { helper } from './utils.js'" in js
+
+    def test_star_import_errors(self):
+        result = compile_source("from utils import *", "main.py")
+        assert result.errors
+        assert "import *" in str(result.errors[0])
 
 
 class TestConstants:

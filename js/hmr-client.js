@@ -16,6 +16,8 @@
     switch (data.type) {
       case 'reload':
         console.log('[PyLevate] Full reload');
+        // Let the runtime snapshot store state (dev-mode rehydration).
+        window.dispatchEvent(new Event('pylevate:before-reload'));
         location.reload();
         break;
 
