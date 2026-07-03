@@ -189,6 +189,29 @@ export function page(opts = {}) {
  * - theme: path to a CSS file, injected as a <link> tag.
  * - root: component to render when no router is given.
  */
+// A minimal history for preact-router that hides a base path prefix, so an app
+// served under /base/ routes as if it were at the origin root. Implements the
+// surface preact-router uses: `location`, `listen`, `push`, `replace`.
+function _baseHistory(base) {
+  const strip = (p) => {
+    const s = p.indexOf(base) === 0 ? p.slice(base.length) : p;
+    return s.charAt(0) === '/' ? s : '/' + s;
+  };
+  const loc = () => ({ pathname: strip(window.location.pathname), search: window.location.search });
+  const listeners = [];
+  const notify = () => { const l = loc(); listeners.slice().forEach((cb) => cb(l)); };
+  window.addEventListener('popstate', notify);
+  return {
+    get location() { return loc(); },
+    listen(cb) {
+      listeners.push(cb);
+      return () => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); };
+    },
+    push(url) { window.history.pushState(null, '', base + url); notify(); },
+    replace(url) { window.history.replaceState(null, '', base + url); notify(); },
+  };
+}
+
 export class App {
   constructor(opts = {}) {
     this.router = opts.router || null;
@@ -215,7 +238,17 @@ export class App {
       const meta = Comp && Comp.__page__;
       if (meta && meta.title) document.title = meta.title;
     };
-    render(h(PreactRouter, { onChange }, children), target);
+    // Honour a <base href> so routes match when the app is served under a
+    // sub-path (e.g. a hosted preview at /.../pylevate-preview/) rather than the
+    // origin root. preact-router 4.x has no `base` prop, so give it a custom
+    // history whose location is stripped of the base prefix.
+    const routerProps = { onChange };
+    const baseEl = document.querySelector('base[href]');
+    if (baseEl) {
+      const basePath = new URL(baseEl.href).pathname.replace(/\/$/, '');
+      if (basePath) routerProps.history = _baseHistory(basePath);
+    }
+    render(h(PreactRouter, routerProps, children), target);
   }
 
   _injectTheme(href) {
