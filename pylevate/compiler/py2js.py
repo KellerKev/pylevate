@@ -2506,16 +2506,74 @@ def _make_triple_replacer(quotes: str):
     return _replace
 
 
-def _rewrite_v_literals(source: str) -> str:
-    """Rewrite v"..." / v'...' / v\"\"\"...\"\"\" to __raw_js__(...) so Python's parser accepts them.
+def _v_literal_replacement(string_token: str) -> str:
+    """Build the __raw_js__ call replacing a v-prefixed string token."""
+    for quotes in ('"""', "'''"):
+        if string_token.startswith(quotes):
+            content = string_token[3:-3]
+            # Raw triple-quoted strings cannot end with a backslash or a
+            # quote adjacent to the closing quotes; a trailing newline is
+            # harmless in verbatim JS.
+            if content.endswith("\\") or content.endswith(quotes[0]):
+                content += "\n"
+            return f"__raw_js__(r{quotes}{content}{quotes})"
+    return f"__raw_js__({string_token})"
 
-    Triple-quoted forms may span multiple lines and are wrapped as raw strings
-    so backslashes inside the JS (regexes, escape sequences) survive intact.
+
+def _rewrite_v_literals_regex(source: str) -> str:
+    """Regex fallback used when the source doesn't tokenize (broken Python).
+
+    Unlike the tokenizer path, this can mis-match v"..." sequences inside
+    strings or comments — acceptable for a source that is already invalid.
     """
     source = _V_TRIPLE_DQ_RE.sub(_make_triple_replacer('"""'), source)
     source = _V_TRIPLE_SQ_RE.sub(_make_triple_replacer("'''"), source)
     source = _V_LITERAL_RE.sub(r'__raw_js__("\1")', source)
     source = _V_LITERAL_SINGLE_RE.sub(r"__raw_js__('\1')", source)
+    return source
+
+
+def _rewrite_v_literals(source: str) -> str:
+    """Rewrite v"..." / v'...' / v\"\"\"...\"\"\" to __raw_js__(...) so Python's parser accepts them.
+
+    Detection is tokenizer-based: a v-literal is a NAME token `v` immediately
+    followed by a STRING token. Occurrences inside ordinary strings,
+    docstrings, or comments are single tokens and are left untouched.
+    Triple-quoted forms may span multiple lines and are wrapped as raw strings
+    so backslashes inside the JS (regexes, escape sequences) survive intact.
+    """
+    import io
+    import tokenize
+
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return _rewrite_v_literals_regex(source)
+
+    # Collect (name_start, string_end, replacement) spans, positions as
+    # (1-based row, 0-based col).
+    spans: list[tuple[tuple[int, int], tuple[int, int], str]] = []
+    for prev, tok in zip(tokens, tokens[1:]):
+        if (prev.type == tokenize.NAME and prev.string == "v"
+                and tok.type == tokenize.STRING
+                and tok.start == prev.end):
+            spans.append((prev.start, tok.end, _v_literal_replacement(tok.string)))
+
+    if not spans:
+        return source
+
+    lines = source.splitlines(keepends=True)
+    line_offsets = [0]
+    for line in lines:
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    def _abs(pos: tuple[int, int]) -> int:
+        row, col = pos
+        return line_offsets[row - 1] + col
+
+    # Replace back-to-front so earlier offsets stay valid.
+    for start, end, replacement in reversed(spans):
+        source = source[: _abs(start)] + replacement + source[_abs(end):]
     return source
 
 

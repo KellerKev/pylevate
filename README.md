@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![CI](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml/badge.svg)](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)](#development)
 [![Bundle](https://img.shields.io/badge/app%20bundle-~12KB%20gzip-blue)](#how-the-compiler-works)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -376,6 +376,8 @@ def persist(self):
 ```
 
 Backslashes inside triple-quoted verbatim JS are preserved as written (regexes like `/\d+/` survive intact).
+
+v-literals are detected with Python's tokenizer, so `v"..."` appearing inside ordinary strings, docstrings, or comments is left untouched.
 
 ### Calling JavaScript APIs from Python
 
@@ -1137,13 +1139,13 @@ pixi install
 pixi run -e test test
 ```
 
-157 tests across 11 test files:
+163 tests across 11 test files:
 
 | Test File | Count | Covers |
 |-----------|-------|--------|
 | `tests/compiler/test_py2js.py` | 46 | Core Python-to-JS compilation, import resolution |
+| `tests/compiler/test_stores.py` | 27 | Store, computed, action, effect, v-strings |
 | `tests/compiler/test_components.py` | 23 | Component class compilation |
-| `tests/compiler/test_stores.py` | 21 | Store, computed, action, effect, v-strings |
 | `tests/compiler/test_templates.py` | 15 | Template dict syntax |
 | `tests/compiler/test_native_bridge.py` | 11 | Capacitor import/method rewriting |
 | `tests/compiler/test_loop_hoister.py` | 10 | Game loop restructuring |

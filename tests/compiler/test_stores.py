@@ -212,6 +212,53 @@ v'''alert("done")'''
 """)
         assert 'alert("done")' in js
 
+    def test_v_string_in_docstring_untouched(self):
+        js = _js('''
+def helper():
+    """Use v"document.title" to read the title."""
+    return 1
+''')
+        assert "__raw_js__" not in js
+        assert "document.title" not in js  # docstrings are dropped, not compiled
+
+    def test_v_string_in_comment_untouched(self):
+        js = _js("""
+# reminder: v"window.scrollY" reads scroll position
+x = 1
+""")
+        assert "__raw_js__" not in js
+        assert "window.scrollY" not in js
+
+    def test_v_like_text_in_ordinary_string_untouched(self):
+        js = _js("""
+s = 'escape hatch: v"document.title"'
+""")
+        assert "__raw_js__" not in js
+        assert 'escape hatch: v"document.title"' in js
+
+    def test_v_triple_in_docstring_untouched(self):
+        js = _js("""
+def helper():
+    '''Use v\"\"\"console.log(1);\"\"\" for multi-line JS.'''
+    return 1
+""")
+        assert "__raw_js__" not in js
+        assert "console.log" not in js
+
+    def test_variable_named_v_not_confused(self):
+        js = _js("""
+v = 5
+y = v
+""")
+        assert "let v = 5" in js or "v = 5" in js
+        assert "__raw_js__" not in js
+
+    def test_v_with_space_before_string_not_a_literal(self):
+        # `v "..."` is not a v-literal (and not valid Python) — must surface
+        # as a syntax error, not be silently rewritten.
+        result = compile_source('x = v "document.title"', "test.py", "app")
+        assert result.errors
+
 
 class TestClassInstantiation:
     def test_new_keyword_added(self):
