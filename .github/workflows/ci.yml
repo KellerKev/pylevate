@@ -27,5 +27,8 @@ jobs:
           environments: test
           cache: true
 
+      - name: Install JS dev dependencies (jsdom runtime tests)
+        run: pixi run -e test npm install --cache .npm-cache
+
       - name: Run test suite
         run: pixi run -e test test

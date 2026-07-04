@@ -1,0 +1,15 @@
+{
+  "name": "pylevate-dev",
+  "private": true,
+  "type": "module",
+  "description": "Dev dependencies for testing the framework's runtime JS (js/*.js) under jsdom. Not shipped; user projects have their own package.json.",
+  "devDependencies": {
+    "preact": "^10.25.0",
+    "@preact/signals": "^1.3.0",
+    "preact-router": "^4.1.2",
+    "jsdom": "^26.0.0"
+  },
+  "scripts": {
+    "test:js": "node tests/js/md_smoke.mjs && node tests/js/ai_core_smoke.mjs && node tests/js/ai_runtime_smoke.mjs && node tests/js/runtime_jsdom.mjs"
+  }
+}

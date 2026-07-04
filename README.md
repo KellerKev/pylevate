@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![CI](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml/badge.svg)](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-233%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-237%20passing-brightgreen)](#development)
 [![Bundle](https://img.shields.io/badge/app%20bundle-~12KB%20gzip-blue)](#how-the-compiler-works)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -1288,20 +1288,20 @@ pixi install
 pixi run -e test test
 ```
 
-233 tests across 18 test files:
+237 tests across 18 test files:
 
 | Test File | Count | Covers |
 |-----------|-------|--------|
-| `tests/compiler/test_py2js.py` | 49 | Core Python-to-JS compilation, import resolution |
+| `tests/compiler/test_py2js.py` | 51 | Core Python-to-JS compilation, import resolution |
 | `tests/compiler/test_stores.py` | 27 | Store, computed, action, effect, v-strings |
 | `tests/compiler/test_components.py` | 23 | Component class compilation |
 | `tests/ide/test_llm_proxy.py` | 17 | LLM proxy: env resolution, SSE streaming, origin checks |
 | `tests/compiler/test_templates.py` | 15 | Template dict syntax |
 | `tests/ide/test_files.py` | 14 | IDE file guards: traversal, symlinks, atomic writes |
+| `tests/ide/test_ide_routes.py` | 11 | IDE HTTP routes: workspace, create, tree, file APIs |
 | `tests/compiler/test_native_bridge.py` | 11 | Capacitor import/method rewriting |
 | `tests/compiler/test_loop_hoister.py` | 10 | Game loop restructuring |
 | `tests/compiler/test_chat_ai.py` | 10 | Golden codegen for pylevate.chat/.ai, async methods |
-| `tests/ide/test_ide_routes.py` | 10 | IDE HTTP routes: workspace, create, tree, file APIs |
 | `tests/integration/test_pipeline_e2e.py` | 10 | Full pipeline: templates → compile → esbuild bundle |
 | `tests/compiler/test_warnings.py` | 7 | Compile warnings (kwargs on native JS APIs) |
 | `tests/compiler/test_html_rewrite.py` | 7 | Production HTML asset-hash rewriting |
@@ -1309,9 +1309,9 @@ pixi run -e test test
 | `tests/compiler/test_routing.py` | 5 | Golden codegen shapes for App/Router/@page |
 | `tests/ide/test_scaffold.py` | 5 | Shared project scaffolding |
 | `tests/compiler/test_esbuild_alias.py` | 4 | Runtime alias map generation |
-| `tests/integration/test_js_core.py` | 3 | Node smoke tests: markdown XSS, SSE parsing, AI client |
+| `tests/integration/test_js_core.py` | 4 | Node JS tests: markdown XSS, SSE parsing, AI client, jsdom runtime |
 
-The integration tests bundle real template projects through npm/esbuild; they skip automatically when node or npm is unavailable. The node smoke tests (`tests/js/*.mjs`) exercise the dependency-free JS modules directly.
+The integration tests bundle real template projects through npm/esbuild; they skip automatically when node or npm is unavailable. The node smoke tests (`tests/js/*.mjs`) exercise the dependency-free JS modules directly, and `tests/js/runtime_jsdom.mjs` runs the browser runtime (routing incl. `<base href>` sub-paths, store rehydration, chat components) under jsdom — install its dependencies once with `npm install` at the repo root.
 
 ### Pixi tasks
 

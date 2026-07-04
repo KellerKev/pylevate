@@ -40,6 +40,19 @@ Please make sure the suite is green before opening a pull request. New behavior 
 the compiler (`pylevate/compiler/`) or runtime (`pylevate/runtime/`, `js/`) should
 be covered by a test under `tests/`.
 
+For browser runtime behavior (`js/*.js`), use the jsdom harness at
+`tests/js/runtime_jsdom.mjs` (routing, store rehydration, components render in a
+simulated DOM). It needs the repo-root JS dev dependencies — install them once:
+
+```bash
+npm install
+node tests/js/runtime_jsdom.mjs   # also runs via pytest when deps are present
+```
+
+Pure protocol logic (markdown, SSE parsing, wire adapters) belongs in the
+zero-import modules (`js/pylevate-md.js`, `js/pylevate-ai-core.js`) with plain
+node smoke tests (`tests/js/*_smoke.mjs`) — no DOM needed.
+
 ## Project layout
 
 A quick map of the tree (see [README.md](README.md#project-structure) for the full
