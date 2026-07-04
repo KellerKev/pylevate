@@ -104,9 +104,59 @@ class TestDashboardTemplateE2E:
         assert "__pylevate_state__" not in hashed[0].read_text()
 
 
+@pytest.fixture(scope="session")
+def chat_project(tmp_path_factory):
+    return _scaffold(tmp_path_factory, "chat")
+
+
+@needs_node
+class TestChatTemplateE2E:
+    """Exercises the chat/AI runtimes: pylevate.chat + pylevate.ai bundling."""
+
+    def test_dev_build_bundles_chat_runtime(self, chat_project):
+        result = Pipeline(project_dir=chat_project, config=Config(mode="app")).build()
+        assert result.success, result.errors
+        out = chat_project / "dist" / "web"
+        bundle = (out / "main.js").read_text()
+        assert "pl-chat-window" in bundle       # chat components bundled
+        assert "AIClient" in bundle             # AI client bundled
+        # Runtime CSS flowed through esbuild's cssBundle into main.css
+        css = (out / "main.css").read_text()
+        assert ".pl-message-list" in css
+        assert ".pl-md" in css
+
+    def test_production_build(self, chat_project):
+        result = Pipeline(
+            project_dir=chat_project, config=Config(mode="app"), production=True
+        ).build()
+        assert result.success, result.errors
+        out = chat_project / "dist" / "web"
+        hashed = [f.name for f in out.iterdir() if re.fullmatch(r"main-[A-Z0-9]{8}\.js", f.name)]
+        assert hashed
+        html = (out / "index.html").read_text()
+        assert hashed[0] in html
+
+
 class TestCompileOnly:
     """Pipeline coverage that runs without node: nested imports compile
     to correct relative specifiers."""
+
+    @pytest.mark.parametrize("template", ["agent", "rag"])
+    def test_ai_templates_compile(self, tmp_path, template):
+        proj = tmp_path.resolve() / template
+        shutil.copytree(TEMPLATES / template, proj)
+        pipeline = Pipeline(project_dir=proj, config=Config(mode="app"))
+        pipeline._prepare_build_dir(clean=True)
+        sources = pipeline._discover_sources()
+        modules, packages = pipeline._build_import_context_sets(
+            sources, pipeline._discover_js_sources()
+        )
+        for src in sources:
+            js_path, errors, _ = pipeline._compile_file(src, modules=modules, packages=packages)
+            assert js_path is not None, f"{src}: {errors}"
+        main_js = (proj / "build_tmp" / "main.js").read_text()
+        assert "'pylevate-ai-runtime'" in main_js
+        assert "'pylevate-chat-runtime'" in main_js
 
     def test_dashboard_nested_imports(self, tmp_path):
         proj = tmp_path.resolve() / "dash"

@@ -36,23 +36,21 @@ def _generate_runner_script(
     """Write a temporary esbuild runner to *build_tmp/_esbuild_runner.mjs*."""
     runner_path = build_tmp / "_esbuild_runner.mjs"
 
-    runtime_alias = "pylevate-game-runtime" if mode == "game" else "pylevate-runtime"
-    runtime_file = "pylevate-game-runtime.js" if mode == "game" else "pylevate-runtime.js"
-    runtime_path = (framework_dir / "js" / runtime_file).as_posix()
-    baselib_path = (framework_dir / "js" / "baselib.js").as_posix()
+    js_dir = framework_dir / "js"
+    baselib_path = (js_dir / "baselib.js").as_posix()
 
-    # Build the alias map fed to esbuild.
-    native_runtime_path = (framework_dir / "js" / "pylevate-native-runtime.js").as_posix()
-    events_path = (framework_dir / "js" / "pylevate-events.js").as_posix()
+    # Build the alias map fed to esbuild: every framework runtime file is
+    # resolvable by its stem, which matches the package names the compiler's
+    # _map_module() emits (pylevate.chat -> 'pylevate-chat-runtime', etc.).
+    # Unused aliases are inert — esbuild only resolves imports that occur.
     alias = {
-        runtime_alias: runtime_path,
-        "pylevate-native-runtime": native_runtime_path,
-        "pylevate-events": events_path,
+        rt.stem: rt.as_posix()
+        for rt in sorted(js_dir.glob("pylevate-*runtime.js"))
     }
-    # In hybrid mode both runtimes should be resolvable.
-    if mode == "hybrid":
-        alias["pylevate-runtime"] = (framework_dir / "js" / "pylevate-runtime.js").as_posix()
-        alias["pylevate-game-runtime"] = (framework_dir / "js" / "pylevate-game-runtime.js").as_posix()
+    alias["pylevate-events"] = (js_dir / "pylevate-events.js").as_posix()
+    if mode == "game":
+        # In game mode, plain `pylevate` imports resolve to the Phaser runtime.
+        alias["pylevate-runtime"] = (js_dir / "pylevate-game-runtime.js").as_posix()
 
     external: list[str] = []
     if mode in ("game", "hybrid"):

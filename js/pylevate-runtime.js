@@ -119,6 +119,16 @@ function __rehydrateStore(name, store) {
       sessionStorage.setItem(__STATE_KEY, JSON.stringify(snapshot));
     }
   } catch (e) { /* ignore */ }
+  // Post-restore hook: lets stores reset transient state (busy flags,
+  // in-flight streams) that must not survive a reload. Runs after cleanup
+  // and guarded, so a throwing hook can't derail rehydration bookkeeping.
+  if (typeof store.on_rehydrate === 'function') {
+    try {
+      store.on_rehydrate();
+    } catch (e) {
+      console.error('[PyLevate] on_rehydrate() failed:', e);
+    }
+  }
 }
 
 if (typeof __PYLEVATE_DEV__ !== 'undefined' && __PYLEVATE_DEV__) {

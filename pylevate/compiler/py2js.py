@@ -794,11 +794,32 @@ class _JSEmitter(ast.NodeVisitor):
             # Return as a named prop to be collected by parent component call
             return f"/* slot_fill:{slot_name} */ {slot_children}"
 
+        # Slot fills among a component's children become slot_<name> props on
+        # the component itself; the remaining entries stay ordinary children.
+        slot_attrs: list[str] = []
+        if isinstance(value, ast.Dict):
+            fill_idx = {
+                i for i, k in enumerate(value.keys)
+                if k is not None and self._is_slot_fill(k)
+            }
+            if fill_idx:
+                for i in sorted(fill_idx):
+                    name = self._extract_slot_fill_name(value.keys[i])
+                    fill_js = self._compile_template_value(value.values[i])
+                    slot_attrs.append(f"slot_{name}: {fill_js}")
+                value = ast.Dict(
+                    keys=[k for i, k in enumerate(value.keys) if i not in fill_idx],
+                    values=[v for i, v in enumerate(value.values) if i not in fill_idx],
+                )
+
         # Compile children
         children = self._compile_template_value(value)
 
         # Build attrs object
         attrs_js = self._compile_template_attrs(attrs)
+        if slot_attrs:
+            joined = ", ".join(slot_attrs)
+            attrs_js = f"{{{joined}}}" if attrs_js == "null" else f"{attrs_js[:-1]}, {joined}}}"
 
         if children and children != "null":
             return f"h({tag_name}, {attrs_js}, {children})"
@@ -2058,6 +2079,34 @@ class _JSEmitter(ast.NodeVisitor):
                 # Python: sep.join(list) -> JS: list.join(sep)
                 return f"{args_js}.join({obj})"
             return f"{obj}.{js_method}({args_js})"
+
+        # .sort(key=..., reverse=...) -> comparator (JS sort has no key option)
+        if (isinstance(func, ast.Attribute) and func.attr == "sort"
+                and any(kw.arg in ("key", "reverse") for kw in node.keywords)):
+            obj = self._expr(func.value)
+            key_fn = None
+            reverse = False
+            for kw in node.keywords:
+                if kw.arg == "key":
+                    key_fn = self._expr(kw.value)
+                elif kw.arg == "reverse":
+                    # The direction is baked into the emitted comparator, so
+                    # only literal True/False can compile faithfully.
+                    if not (isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, bool)):
+                        self._error(
+                            node,
+                            "sort(reverse=...) requires a literal True or False — "
+                            "a dynamic value cannot be compiled",
+                        )
+                        return f"{obj}.sort()"
+                    reverse = kw.value.value
+            lo, hi = ("1", "-1") if reverse else ("-1", "1")
+            if key_fn:
+                return (f"{obj}.sort((a, b) => {{ const _kf = {key_fn}; "
+                        f"let ka = _kf(a), kb = _kf(b); "
+                        f"return ka < kb ? {lo} : ka > kb ? {hi} : 0; }})")
+            return f"{obj}.sort((a, b) => a < b ? {lo} : a > b ? {hi} : 0)"
 
         # .append() -> .push()
         if isinstance(func, ast.Attribute) and func.attr == "append":

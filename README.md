@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![CI](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml/badge.svg)](https://github.com/KellerKev/pylevate/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-233%20passing-brightgreen)](#development)
 [![Bundle](https://img.shields.io/badge/app%20bundle-~12KB%20gzip-blue)](#how-the-compiler-works)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -43,6 +43,8 @@ That compiles to a ~12KB gzipped Preact bundle -- no virtual DOM diffing of Pyth
 - **Compiles away entirely.** Ships idiomatic Preact + Phaser JS. No interpreter tax at runtime; bundles start around ~12KB gzipped.
 - **Reactive by default.** `state()` and `store()` build on `@preact/signals` for fine-grained updates without a virtual-DOM re-render.
 - **pygame in the browser.** Write `pygame`-style game loops; they hoist into Phaser's render loop automatically.
+- **LLM apps out of the box.** `pylevate.chat` ships chat UI components and `pylevate.ai` a streaming client for OpenAI-compatible APIs and Anthropic — with tool calling, embeddings, and a key-hiding dev proxy.
+- **A browser IDE included.** `pylevate ide` creates, edits, and live-previews projects with zero editor setup.
 - **Mobile from day one.** `--mobile` wires up Capacitor so the same code base builds for iOS and Android.
 - **Fast dev loop.** Live reload with store-state restore and a compile-error overlay, scoped CSS, and a zero-config playground you can run with a single command.
 
@@ -60,6 +62,8 @@ That compiles to a ~12KB gzipped Preact bundle -- no virtual DOM diffing of Pyth
   - [Expression Tiers](#expression-tiers)
   - [Scoped CSS](#scoped-css)
   - [Routing](#routing)
+- [AI & Chat Apps](#ai--chat-apps)
+- [Browser IDE](#browser-ide)
 - [Game Mode](#game-mode)
   - [pygame API](#pygame-api)
   - [Sprite and Group](#sprite-and-group)
@@ -104,7 +108,7 @@ pixi run dev
 pixi run build
 ```
 
-The `init` command accepts a template flag: `--template app` (default), `--template game`, `--template hybrid`, or `--template dashboard`.
+The `init` command accepts a template flag: `--template app` (default), `game`, `hybrid`, `dashboard`, `chat`, `agent`, or `rag`.
 
 Add `--mobile` to pre-configure Capacitor for iOS/Android builds:
 
@@ -575,6 +579,134 @@ The `dashboard` template (`pylevate init my-app --template dashboard`) is a work
 
 ---
 
+## AI & Chat Apps
+
+PyLevate ships out-of-the-box building blocks for LLM chat and agent apps: `pylevate.chat` (UI components) and `pylevate.ai` (a streaming LLM client). Everything runs in the browser -- no Python backend required.
+
+**Quick start:**
+
+```bash
+pylevate init my-bot --template chat
+cd my-bot && pylevate dev
+# Point the endpoint at a local Ollama (http://localhost:11434/v1) and chat.
+```
+
+```python
+from pylevate import Component, Store, h, mount
+from pylevate.ai import AIClient
+from pylevate.chat import ChatInput, ChatWindow, MessageList
+from pylevate.signals import signal
+
+class Chat(Store):
+    messages = signal([])
+    streaming_text = signal(None)
+    busy = signal(False)
+
+    async def send(self, text):
+        self.messages = [*self.messages, {'role': 'user', 'content': text}]
+        self.busy = True
+        self.streaming_text = ''
+        client = AIClient(base_url='http://localhost:11434/v1', model='llama3.2')
+        reply = await client.chat(
+            self.messages,
+            on_token=lambda t: self.push_token(t),   # callbacks are lambdas!
+        )
+        self.messages = [*self.messages, reply]
+        self.streaming_text = None
+        self.busy = False
+```
+
+### `pylevate.chat` components
+
+| Component | Props | Notes |
+|-----------|-------|-------|
+| `ChatWindow` | slots: `header`, `footer` | flex-column layout shell; children = body |
+| `MessageList` | `messages`, `streaming_text`, `streaming`, `markdown`, `empty_text` | smart autoscroll, streaming bubble, tool cards |
+| `MessageBubble` | `role`, `content`, `streaming`, `markdown` | assistant content rendered as markdown |
+| `ChatInput` | `on_send(text)`, `disabled`, `placeholder` | Enter sends, Shift+Enter = newline |
+| `ToolCallCard` | `name`, `args`, `result`, `status`, `open` | collapsible tool-invocation card |
+| `TypingIndicator` | -- | three-dot pulse |
+| `Markdown` | `source` | sanitized markdown → HTML |
+
+Messages are plain dicts (`{'id', 'role', 'content', ...}`, the OpenAI chat shape), so a conversation kept in a `Store` survives dev reloads. All component CSS uses the reserved `pl-` class prefix; override those classes (or the `--pl-chat-*` CSS variables) to theme.
+
+### `pylevate.ai` client
+
+```python
+client = AIClient(base_url='http://localhost:11434/v1', api_key='', model='llama3.2')
+
+reply  = await client.chat(messages, on_token=lambda t: store.push(t))   # streaming
+text   = await client.complete('One-line haiku about ducks')             # one-shot
+vecs   = await client.embeddings(chunks, model='nomic-embed-text')       # embeddings
+result = await client.run_tools(messages, tools=[calculator],            # agent loop
+                                on_step=lambda s: store.log(s))
+```
+
+- **Callbacks must be lambdas** (`on_token=lambda t: self.push(t)`). A bare method reference like `self.push` loses `this` in the compiled JS.
+- Abort a stream by passing `signal=controller.signal` from an `AbortController()`; the partial text streamed so far is preserved.
+- `tool(name=..., description=..., parameters={...JSON Schema...}, handler=lambda args: ...)` declares a tool for `run_tools`; each step emits `tool_call` / `tool_result` events that map straight onto `ToolCallCard`.
+
+**Providers** (auto-detected from `base_url`):
+
+| Provider | base_url | Notes |
+|----------|----------|-------|
+| Ollama | `http://localhost:11434/v1` | no key; run `ollama serve` |
+| LM Studio | `http://localhost:1234/v1` | no key |
+| OpenAI | `https://api.openai.com/v1` | `api_key` required |
+| vLLM / any OpenAI-compatible | your server's `/v1` | server must allow CORS, or use the proxy |
+| Anthropic | `https://api.anthropic.com` | browser-direct via `anthropic-dangerous-direct-browser-access`; suitable for local/trusted apps. No embeddings endpoint. |
+
+### API keys and the dev proxy
+
+Never ship API keys in a bundle. For development, keep the key out of the browser entirely: start the dev server with a key in the environment and point the client at the built-in proxy:
+
+```bash
+OPENAI_API_KEY=sk-... pylevate dev          # or ANTHROPIC_API_KEY, or
+PYLEVATE_LLM_BASE_URL=http://localhost:11434/v1 pylevate dev
+```
+
+```python
+client = AIClient(base_url='/api/llm', model='gpt-4o-mini')
+```
+
+The proxy (`POST /api/llm/...`) forwards whitelisted routes (`chat/completions`, `embeddings`, `v1/messages`) to the configured upstream, attaches the key server-side, and streams SSE straight through. It is localhost-only and rejects cross-origin requests. For production, put the same contract behind your own backend.
+
+### Markdown safety
+
+Assistant output renders through a built-in, dependency-free markdown renderer: the entire input is HTML-escaped before parsing, so model (or prompt-injected) HTML can never execute; link URLs are restricted to http/https/mailto (a `javascript:` URL becomes `#`). Supported: headings, bold/italic, inline code, fenced code blocks, links, single-level lists, blockquotes, `---`. Not supported by design: tables, nested lists, images, raw HTML.
+
+### Templates
+
+- **`chat`** -- streaming chatbot: settings panel (endpoint/model/key), markdown replies, stop button, history that survives dev reloads.
+- **`agent`** -- tool-calling agent: a no-`eval` calculator and a `fetch_url` tool, with every tool call shown as an expandable card next to the chat.
+- **`rag`** -- embeddings Q&A: chunks a corpus (`corpus.py`), embeds it once (the index survives dev reloads), retrieves top chunks by cosine similarity, and answers with numbered citations plus expandable sources.
+
+---
+
+## Browser IDE
+
+`pylevate ide` launches a browser IDE for creating, editing, and running PyLevate projects — no editor setup required:
+
+```bash
+pylevate ide --workspace ~/pylevate-projects --open
+```
+
+- **Workspace**: any directory; every subdirectory containing a `pylevate.config.py` appears as a project. An empty directory works -- create projects from any template in the New Project dialog.
+- **Editing**: file tree, tabs, CodeMirror with Python highlighting (falls back to a plain editor when offline). `Cmd/Ctrl+S` saves to disk; the dev pipeline rebuilds and the preview reloads automatically.
+- **Preview**: the real built app served by the dev server, with the standard error overlay; compile errors also appear in the IDE's error panel -- click one to jump to the file and line.
+- **Requirements**: Node.js + npm for builds (`npm install` runs automatically when you create a project).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--workspace`, `-w` | `.` | Workspace directory |
+| `--port`, `-p` | `3000` | IDE/dev server port |
+| `--hmr-port` | `3001` | HMR WebSocket port |
+| `--open`, `-o` | `false` | Open the IDE in a browser |
+
+Note: per-project `dev_port`/`hmr_port` values in `pylevate.config.py` are ignored in IDE mode -- the server ports are fixed at launch. The IDE is a local development tool: it binds to localhost and edits files with your user's permissions.
+
+---
+
 ## Game Mode
 
 ### pygame API
@@ -879,7 +1011,7 @@ Scaffold a new project.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--template`, `-t` | `app` | Template: `app`, `game`, `hybrid`, `dashboard` |
+| `--template`, `-t` | `app` | Template: `app`, `game`, `hybrid`, `dashboard`, `chat`, `agent`, `rag` |
 | `--mobile` | `false` | Pre-configure Capacitor |
 
 ### `pylevate dev`
@@ -899,6 +1031,17 @@ On every `.py` save the project is rebuilt and the page reloads; `.css` changes 
 - **Not preserved** -- component-local `state()` fields, non-JSON store values, and game-mode state (Phaser restarts cleanly by design).
 
 Compile errors appear as a full-screen overlay in the browser (with file/line) and dismiss automatically when fixed.
+
+### `pylevate ide`
+
+Launch the browser IDE (see [Browser IDE](#browser-ide)): create projects from templates, edit files with live rebuild + preview.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--workspace`, `-w` | `.` | Workspace directory |
+| `--port`, `-p` | `3000` | IDE/dev server port |
+| `--hmr-port` | `3001` | HMR WebSocket port |
+| `--open`, `-o` | `false` | Open the IDE in a browser |
 
 ### `pylevate playground`
 
@@ -1001,48 +1144,54 @@ The compiler uses Python's `ast` module to parse Python source and emit ES6 Java
 ```
 pyframework/
 ├── pylevate/
-│   ├── __init__.py                 # Package entry, exports Config
+│   ├── __init__.py                 # Package entry: Config + IDE-facing stubs
 │   ├── __main__.py                 # python -m pylevate entry
-│   ├── cli.py                      # CLI: init, dev, build, mobile
+│   ├── cli.py                      # CLI: init, dev, ide, playground, build, mobile
 │   ├── config.py                   # Config dataclass + loader
-│   ├── server.py                   # Dev server with HMR
+│   ├── scaffold.py                 # Project scaffolding (shared by CLI + IDE)
+│   ├── server.py                   # Dev server with HMR + /api/llm proxy
+│   ├── ai.py / chat.py / native.py # IDE-facing import mirrors of runtime stubs
 │   ├── compiler/
 │   │   ├── pipeline.py             # Orchestrates: discover -> compile -> transform -> bundle
 │   │   ├── py2js.py                # Python AST -> JavaScript emitter
-│   │   ├── template_walker.py      # [[expr]] interpolation, template string conversion
 │   │   ├── loop_hoister.py         # Game: while loop -> preload/create/update
 │   │   ├── css_scoper.py           # SHA1-scoped class names
 │   │   ├── esbuild.py              # esbuild runner (generates Node script, parses output)
 │   │   └── native_bridge.py        # pylevate.native -> @capacitor/* rewriting
-│   ├── hmr/                        # Hot module replacement
+│   ├── ide/                        # Browser IDE
+│   │   ├── server.py               # IDEServer: workspace + switchable active project
+│   │   ├── handler.py              # /api/ide/* routes + IDE UI serving
+│   │   ├── files.py                # Path-guarded file tree/read/write
+│   │   ├── llm_proxy.py            # /api/llm streaming proxy (keys stay server-side)
+│   │   └── static/index.html       # The IDE UI (single file)
 │   ├── runtime/                    # Python type stubs (IDE only, never shipped)
 │   │   ├── component.py            # Component, Tag, h, Slot, SlotsEnum, state, css, prop
 │   │   ├── signals.py              # signal, computed, effect, batch
+│   │   ├── chat.py                 # ChatWindow, MessageList, ChatInput, ToolCallCard...
+│   │   ├── ai.py                   # AIClient, tool, cosine_similarity, chunk_text
 │   │   ├── native.py               # Camera, Geolocation, Haptics, Storage, Share
 │   │   └── game.py                 # pygame-compatible API stubs
 │   ├── templates/                  # Project scaffolding templates
-│   │   ├── app/                    # pylevate init --template app
-│   │   ├── game/                   # pylevate init --template game
-│   │   ├── hybrid/                 # pylevate init --template hybrid
-│   │   └── dashboard/              # pylevate init --template dashboard
+│   │   ├── app/ game/ hybrid/      # Core templates
+│   │   ├── dashboard/              # Routing showcase
+│   │   └── chat/ agent/ rag/       # LLM app templates
 │   └── mobile/
 │       └── capacitor.py            # Capacitor config, sync, IDE launch
 ├── js/
-│   ├── pylevate-runtime.js         # Re-exports Preact + @preact/signals
+│   ├── pylevate-runtime.js         # Re-exports Preact + @preact/signals; Store, Router, App
+│   ├── pylevate-chat-runtime.js    # Chat UI components (+ pylevate-chat.css)
+│   ├── pylevate-ai-runtime.js      # AIClient, tool loop (pure logic in pylevate-ai-core.js)
+│   ├── pylevate-md.js              # Dependency-free sanitizing markdown renderer
 │   ├── pylevate-game-runtime.js    # pygame shim on top of Phaser
 │   ├── pylevate-native-runtime.js  # Native bridge stubs (web fallbacks)
 │   ├── pylevate-events.js          # EventBus for hybrid mode
 │   ├── baselib.js                  # Shared JS baselib (injected by esbuild)
 │   └── hmr-client.js               # Dev-only HMR WebSocket listener
 ├── tests/
-│   └── compiler/
-│       ├── test_py2js.py           # Python-to-JS compilation (33 tests)
-│       ├── test_components.py      # Component compilation (21 tests)
-│       ├── test_templates.py       # Template walking (15 tests)
-│       ├── test_stores.py          # Store compilation (13 tests)
-│       ├── test_native_bridge.py   # Native bridge rewriting (11 tests)
-│       ├── test_loop_hoister.py    # Game loop hoisting (10 tests)
-│       └── test_css_scoper.py      # CSS scoping (6 tests)
+│   ├── compiler/                   # Codegen unit + golden tests
+│   ├── ide/                        # File guards, scaffold, LLM proxy, IDE routes
+│   ├── js/                         # Node smoke tests (markdown, SSE, AI client)
+│   └── integration/                # Full pipeline e2e through npm/esbuild
 ├── pixi.toml                       # Pixi workspace config
 ├── pixi.lock
 └── spec.md                         # Full implementation spec
@@ -1139,23 +1288,30 @@ pixi install
 pixi run -e test test
 ```
 
-163 tests across 11 test files:
+233 tests across 18 test files:
 
 | Test File | Count | Covers |
 |-----------|-------|--------|
-| `tests/compiler/test_py2js.py` | 46 | Core Python-to-JS compilation, import resolution |
+| `tests/compiler/test_py2js.py` | 49 | Core Python-to-JS compilation, import resolution |
 | `tests/compiler/test_stores.py` | 27 | Store, computed, action, effect, v-strings |
 | `tests/compiler/test_components.py` | 23 | Component class compilation |
+| `tests/ide/test_llm_proxy.py` | 17 | LLM proxy: env resolution, SSE streaming, origin checks |
 | `tests/compiler/test_templates.py` | 15 | Template dict syntax |
+| `tests/ide/test_files.py` | 14 | IDE file guards: traversal, symlinks, atomic writes |
 | `tests/compiler/test_native_bridge.py` | 11 | Capacitor import/method rewriting |
 | `tests/compiler/test_loop_hoister.py` | 10 | Game loop restructuring |
+| `tests/compiler/test_chat_ai.py` | 10 | Golden codegen for pylevate.chat/.ai, async methods |
+| `tests/ide/test_ide_routes.py` | 10 | IDE HTTP routes: workspace, create, tree, file APIs |
+| `tests/integration/test_pipeline_e2e.py` | 10 | Full pipeline: templates → compile → esbuild bundle |
 | `tests/compiler/test_warnings.py` | 7 | Compile warnings (kwargs on native JS APIs) |
 | `tests/compiler/test_html_rewrite.py` | 7 | Production HTML asset-hash rewriting |
 | `tests/compiler/test_css_scoper.py` | 6 | CSS class name scoping |
-| `tests/integration/test_pipeline_e2e.py` | 6 | Full pipeline: template → compile → esbuild bundle |
 | `tests/compiler/test_routing.py` | 5 | Golden codegen shapes for App/Router/@page |
+| `tests/ide/test_scaffold.py` | 5 | Shared project scaffolding |
+| `tests/compiler/test_esbuild_alias.py` | 4 | Runtime alias map generation |
+| `tests/integration/test_js_core.py` | 3 | Node smoke tests: markdown XSS, SSE parsing, AI client |
 
-The integration tests bundle real template projects through npm/esbuild; they skip automatically when node or npm is unavailable.
+The integration tests bundle real template projects through npm/esbuild; they skip automatically when node or npm is unavailable. The node smoke tests (`tests/js/*.mjs`) exercise the dependency-free JS modules directly.
 
 ### Pixi tasks
 
@@ -1165,6 +1321,7 @@ The integration tests bundle real template projects through npm/esbuild; they sk
 | `pixi run build` | Production build |
 | `pixi run test` | Run test suite |
 | `pixi run init` | Scaffold new project |
+| `pixi run ide` | Launch the browser IDE |
 
 ### Dependencies
 

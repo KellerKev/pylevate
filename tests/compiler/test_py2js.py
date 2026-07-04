@@ -117,6 +117,32 @@ class TestNestedImports:
         assert "import *" in str(result.errors[0])
 
 
+class TestSortKey:
+    def test_sort_with_key_becomes_comparator(self):
+        js = _js("xs.sort(key=lambda s: -s['score'])")
+        assert ".sort((a, b) =>" in js
+        assert "_kf = (s) => -s['score']" in js
+        # Never the broken options-object form
+        assert ".sort({key" not in js
+
+    def test_sort_with_key_and_reverse(self):
+        js = _js("xs.sort(key=lambda s: s.name, reverse=True)")
+        assert "ka < kb ? 1 : ka > kb ? -1 : 0" in js
+
+    def test_sort_reverse_false_stays_ascending(self):
+        js = _js("xs.sort(key=lambda s: s.name, reverse=False)")
+        assert "ka < kb ? -1 : ka > kb ? 1 : 0" in js
+
+    def test_sort_dynamic_reverse_errors(self):
+        result = compile_source("xs.sort(reverse=flag)", "test.py", "app")
+        assert result.errors
+        assert "literal True or False" in str(result.errors[0])
+
+    def test_plain_sort_untouched(self):
+        js = _js("xs.sort()")
+        assert "xs.sort()" in js
+
+
 class TestConstants:
     def test_none(self):
         js = _js("x = None")

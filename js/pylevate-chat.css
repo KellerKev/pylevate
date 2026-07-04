@@ -1,0 +1,275 @@
+/* PyLevate chat components. All selectors carry the reserved `pl-` prefix and
+   stay single-class so user overrides win on specificity. */
+
+.pl-chat-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pl-chat-bg, #fafafa);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.pl-chat-header {
+  flex: none;
+  border-bottom: 1px solid var(--pl-chat-border, #e0e0e0);
+  background: var(--pl-chat-surface, #ffffff);
+  padding: 0.75rem 1rem;
+}
+
+.pl-chat-footer {
+  flex: none;
+  border-top: 1px solid var(--pl-chat-border, #e0e0e0);
+  background: var(--pl-chat-surface, #ffffff);
+}
+
+.pl-chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pl-message-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pl-empty {
+  margin: auto;
+  color: #999;
+  font-size: 0.95rem;
+}
+
+.pl-bubble {
+  max-width: 78%;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  line-height: 1.5;
+  font-size: 0.95rem;
+  overflow-wrap: break-word;
+}
+
+.pl-bubble-user {
+  align-self: flex-end;
+  background: var(--pl-chat-accent, #5c6bc0);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+}
+
+.pl-bubble-assistant {
+  align-self: flex-start;
+  background: var(--pl-chat-surface, #ffffff);
+  border: 1px solid var(--pl-chat-border, #e0e0e0);
+  color: #222;
+  border-bottom-left-radius: 4px;
+}
+
+.pl-bubble-tool {
+  align-self: flex-start;
+  max-width: 78%;
+}
+
+/* Streaming replies render as plain text until complete. */
+.pl-bubble.pl-streaming {
+  white-space: pre-wrap;
+}
+
+.pl-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: pl-caret-blink 1s steps(2) infinite;
+}
+
+@keyframes pl-caret-blink {
+  50% { opacity: 0; }
+}
+
+.pl-typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 0.4rem 0.2rem;
+}
+
+.pl-typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aaa;
+  animation: pl-typing-pulse 1.2s ease-in-out infinite;
+}
+
+.pl-typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.pl-typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes pl-typing-pulse {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.pl-chat-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.pl-chat-textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--pl-chat-border, #d0d0d0);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  max-height: 10rem;
+  background: var(--pl-chat-surface, #ffffff);
+}
+
+.pl-chat-textarea:focus {
+  outline: 2px solid var(--pl-chat-accent, #5c6bc0);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.pl-chat-textarea:disabled {
+  background: #f2f2f2;
+  color: #999;
+}
+
+.pl-send-btn {
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  background: var(--pl-chat-accent, #5c6bc0);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.55rem 1.1rem;
+  cursor: pointer;
+}
+
+.pl-send-btn:hover { filter: brightness(0.94); }
+
+.pl-send-btn:disabled {
+  background: #c5cae9;
+  cursor: default;
+}
+
+.pl-tool-card {
+  border: 1px solid var(--pl-chat-border, #e0e0e0);
+  border-radius: 8px;
+  background: var(--pl-chat-surface, #ffffff);
+  font-size: 0.88rem;
+  overflow: hidden;
+}
+
+.pl-tool-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  color: #444;
+  list-style: none;
+}
+
+.pl-tool-summary::-webkit-details-marker { display: none; }
+
+.pl-tool-name {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-weight: 600;
+}
+
+.pl-tool-status {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: #888;
+}
+
+.pl-tool-status-error { color: #e53935; }
+
+.pl-tool-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ddd;
+  border-top-color: var(--pl-chat-accent, #5c6bc0);
+  border-radius: 50%;
+  animation: pl-spin 0.8s linear infinite;
+}
+
+@keyframes pl-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pl-tool-detail {
+  border-top: 1px solid var(--pl-chat-border, #eee);
+  padding: 0.5rem 0.75rem;
+}
+
+.pl-tool-label {
+  color: #999;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.25rem 0 0.15rem;
+}
+
+.pl-tool-pre {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  background: #f6f6f8;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* Markdown body */
+
+.pl-md p { margin: 0.4em 0; }
+.pl-md p:first-child { margin-top: 0; }
+.pl-md p:last-child { margin-bottom: 0; }
+.pl-md h1, .pl-md h2, .pl-md h3, .pl-md h4, .pl-md h5, .pl-md h6 { margin: 0.6em 0 0.3em; }
+.pl-md ul, .pl-md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.pl-md blockquote {
+  margin: 0.4em 0;
+  padding: 0.2em 0.8em;
+  border-left: 3px solid var(--pl-chat-accent, #5c6bc0);
+  color: #555;
+}
+.pl-md code {
+  background: #f0f0f4;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.85em;
+}
+.pl-md pre {
+  background: #1a1a2e;
+  color: #e8e8ef;
+  border-radius: 8px;
+  padding: 0.7em 0.9em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.pl-md pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 0.85em;
+}
+.pl-md a { color: var(--pl-chat-accent, #5c6bc0); }
+.pl-md hr { border: none; border-top: 1px solid #e0e0e0; margin: 0.8em 0; }

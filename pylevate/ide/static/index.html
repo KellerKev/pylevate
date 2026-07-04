@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyLevate IDE</title>
+<style>
+  :root {
+    --bg: #14141f; --panel: #1c1c2b; --panel2: #222233; --border: #2e2e44;
+    --text: #e2e2ea; --dim: #8a8aa0; --accent: #7c8aff; --green: #4caf82;
+    --red: #ff6b6b; --yellow: #e6c07b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text); overflow: hidden;
+  }
+  .app { display: grid; grid-template-columns: 230px 1fr 42%; grid-template-rows: 1fr 28px; height: 100vh; }
+
+  /* Sidebar */
+  .sidebar { grid-row: 1; border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .side-head { padding: 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .brand { font-weight: 700; font-size: 13px; letter-spacing: 0.06em; color: var(--accent); }
+  select, .btn {
+    width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn-accent { background: var(--accent); color: #14141f; font-weight: 600; border: none; }
+  .tree { flex: 1; overflow: auto; padding: 6px 4px; font-size: 12.5px; }
+  .tree-item { padding: 3px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; color: var(--dim); }
+  .tree-item:hover { background: var(--panel2); color: var(--text); }
+  .tree-item.active { background: var(--panel2); color: var(--accent); }
+  .tree-dir { color: var(--text); font-weight: 600; }
+  .tree-children { margin-left: 14px; }
+
+  /* Editor column */
+  .main { grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--panel); overflow-x: auto; flex: none; }
+  .tab { padding: 7px 12px; font-size: 12.5px; color: var(--dim); cursor: pointer; border-right: 1px solid var(--border); white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+  .tab.active { color: var(--text); background: var(--bg); }
+  .tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--yellow); display: none; }
+  .tab.dirty .dot { display: block; }
+  .tab .close { color: var(--dim); }
+  .tab .close:hover { color: var(--red); }
+  .editor-host { flex: 1; min-height: 0; position: relative; }
+  .editor-host .cm-editor { height: 100%; }
+  .fallback-ta {
+    width: 100%; height: 100%; resize: none; border: none; outline: none;
+    background: var(--bg); color: var(--text); padding: 12px;
+    font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 13px; line-height: 1.55; tab-size: 4;
+  }
+  .placeholder { display: flex; height: 100%; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; text-align: center; padding: 2rem; }
+  .errors { flex: none; max-height: 160px; overflow: auto; border-top: 1px solid var(--border); background: #2a1620; display: none; }
+  .errors.visible { display: block; }
+  .error-line { padding: 6px 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 12px; color: var(--red); cursor: pointer; }
+  .error-line:hover { background: #3a1e2c; }
+
+  /* Preview */
+  .preview { grid-row: 1; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+  .preview-bar { display: flex; gap: 6px; padding: 6px; border-bottom: 1px solid var(--border); background: var(--panel); align-items: center; flex: none; }
+  .preview-bar input { flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  .icon-btn { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 12px; }
+  .icon-btn:hover { border-color: var(--accent); }
+  iframe { flex: 1; border: none; background: #fff; }
+  .preview-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; }
+
+  /* Status bar */
+  .status { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 14px; padding: 0 12px; background: var(--panel); border-top: 1px solid var(--border); font-size: 11.5px; color: var(--dim); }
+  .status .pill { display: inline-flex; align-items: center; gap: 6px; }
+  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .led.ok { background: var(--green); }
+  .led.error { background: var(--red); }
+  .led.building { background: var(--yellow); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  /* Modal */
+  .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .modal-back.visible { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; width: 430px; }
+  .modal h2 { font-size: 15px; margin-bottom: 12px; }
+  .modal label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+  .modal input[type=text] { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px; }
+  .tpl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .tpl { border: 1px solid var(--border); border-radius: 7px; padding: 8px; cursor: pointer; font-size: 12.5px; }
+  .tpl small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .tpl.selected { border-color: var(--accent); background: var(--panel2); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .modal-note { font-size: 12px; color: var(--yellow); margin-top: 10px; min-height: 16px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="side-head">
+      <div class="brand">PYLEVATE IDE</div>
+      <select id="project-select"><option value="">— open project —</option></select>
+      <button class="btn btn-accent" id="new-project-btn">New Project</button>
+    </div>
+    <div class="tree" id="tree"></div>
+  </div>
+
+  <div class="main">
+    <div class="tabs" id="tabs"></div>
+    <div class="editor-host" id="editor-host">
+      <div class="placeholder" id="editor-placeholder">Open a project, then pick a file.<br><br>⌘S / Ctrl+S saves and rebuilds.</div>
+    </div>
+    <div class="errors" id="errors"></div>
+  </div>
+
+  <div class="preview">
+    <div class="preview-bar">
+      <button class="icon-btn" id="preview-reload" title="Reload preview">⟳</button>
+      <input id="preview-url" value="/" spellcheck="false">
+      <a class="icon-btn" id="preview-open" href="/" target="_blank" title="Open in new tab">↗</a>
+    </div>
+    <div class="preview-empty" id="preview-empty">No project open</div>
+    <iframe id="preview" style="display:none"></iframe>
+  </div>
+
+  <div class="status">
+    <span class="pill"><span class="led" id="build-led"></span><span id="build-text">idle</span></span>
+    <span class="pill" id="npm-pill" style="display:none"><span class="led building"></span><span id="npm-text"></span></span>
+    <span class="pill"><span class="led" id="ws-led"></span><span>HMR</span></span>
+    <span id="editor-kind" style="margin-left:auto"></span>
+  </div>
+</div>
+
+<div class="modal-back" id="modal-back">
+  <div class="modal">
+    <h2>New Project</h2>
+    <label>Project name</label>
+    <input type="text" id="np-name" placeholder="my-app" spellcheck="false">
+    <label>Template</label>
+    <div class="tpl-grid" id="np-templates"></div>
+    <div class="modal-note" id="np-note"></div>
+    <div class="modal-actions">
+      <button class="btn" id="np-cancel" style="width:auto">Cancel</button>
+      <button class="btn btn-accent" id="np-create" style="width:auto">Create</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const IDE_CONFIG = __PYLEVATE_IDE_CONFIG__;
+
+const TEMPLATE_BLURBS = {
+  app: 'Counter starter (Preact)', game: 'Space shooter (Phaser)',
+  hybrid: 'Game + DOM overlay', dashboard: 'Routing showcase',
+  chat: 'Streaming LLM chatbot', agent: 'Tool-calling agent', rag: 'Embeddings Q&A',
+};
+
+const state = {
+  project: IDE_CONFIG.activeProject || null,
+  tabs: [],            // {path, content, savedContent}
+  activeTab: null,
+  templates: [],
+  npmWatch: null,   // project names whose npm install we're watching
+};
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------------------
+// Editor abstraction: CodeMirror 6 from esm.sh, textarea fallback offline.
+// ---------------------------------------------------------------------------
+let editorFactory = null;
+
+function textareaFactory() {
+  return {
+    kind: 'textarea',
+    create(host, { value, onChange }) {
+      const ta = document.createElement('textarea');
+      ta.className = 'fallback-ta';
+      ta.spellcheck = false;
+      ta.value = value;
+      ta.addEventListener('input', () => onChange(ta.value));
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          const s = ta.selectionStart;
+          ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(ta.selectionEnd);
+          ta.selectionStart = ta.selectionEnd = s + 4;
+          onChange(ta.value);
+        }
+      });
+      host.appendChild(ta);
+      return {
+        getValue: () => ta.value,
+        setValue: (v) => { ta.value = v; },
+        focus: () => ta.focus(),
+        gotoLine: (line) => {
+          const idx = ta.value.split('\n').slice(0, Math.max(0, line - 1)).join('\n').length;
+          ta.focus(); ta.selectionStart = ta.selectionEnd = idx + (line > 1 ? 1 : 0);
+        },
+        destroy: () => ta.remove(),
+      };
+    },
+  };
+}
+
+async function loadEditorFactory() {
+  // CodeMirror 5 via classic script tags: a single window.CodeMirror global,
+  // no ESM instance pitfalls, trivially CDN-loadable. Textarea fallback when
+  // offline.
+  const CM_BASE = 'https://cdn.jsdelivr.net/npm/codemirror@5.65.16';
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error(`failed: ${src}`));
+    document.head.appendChild(s);
+  });
+  const loadCss = (href) => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet'; l.href = href;
+    document.head.appendChild(l);
+  };
+  try {
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('cdn timeout')), 8000));
+    await Promise.race([timeout, (async () => {
+      loadCss(`${CM_BASE}/lib/codemirror.min.css`);
+      loadCss(`${CM_BASE}/theme/material-darker.min.css`);
+      await loadScript(`${CM_BASE}/lib/codemirror.min.js`);
+      await Promise.all([
+        loadScript(`${CM_BASE}/mode/python/python.min.js`),
+        loadScript(`${CM_BASE}/mode/css/css.min.js`),
+        loadScript(`${CM_BASE}/mode/xml/xml.min.js`),
+        loadScript(`${CM_BASE}/mode/javascript/javascript.min.js`),
+        loadScript(`${CM_BASE}/mode/htmlmixed/htmlmixed.min.js`),
+      ]);
+    })()]);
+    const modeFor = (path) => {
+      if (path.endsWith('.py')) return 'python';
+      if (path.endsWith('.css')) return 'css';
+      if (path.endsWith('.html')) return 'htmlmixed';
+      if (path.endsWith('.js')) return 'javascript';
+      if (path.endsWith('.json')) return { name: 'javascript', json: true };
+      return null;
+    };
+    return {
+      kind: 'codemirror',
+      create(host, { value, path, onChange }) {
+        const cm = window.CodeMirror(host, {
+          value,
+          mode: modeFor(path || ''),
+          theme: 'material-darker',
+          lineNumbers: true,
+          indentUnit: 4,
+          viewportMargin: 50,
+        });
+        cm.getWrapperElement().style.height = '100%';
+        cm.getWrapperElement().style.fontSize = '13px';
+        cm.on('change', () => onChange(cm.getValue()));
+        setTimeout(() => cm.refresh(), 0);
+        return {
+          getValue: () => cm.getValue(),
+          setValue: (v) => cm.setValue(v),
+          focus: () => cm.focus(),
+          gotoLine: (line) => {
+            cm.setCursor({ line: Math.max(0, line - 1), ch: 0 });
+            cm.focus();
+          },
+          destroy: () => cm.getWrapperElement().remove(),
+        };
+      },
+    };
+  } catch (err) {
+    console.warn('[IDE] CodeMirror unavailable, using textarea fallback:', err.message);
+    return textareaFactory();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `${method} ${path} → ${response.status}`);
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace / project handling
+// ---------------------------------------------------------------------------
+async function refreshWorkspace() {
+  const ws = await api('GET', '/api/ide/workspace');
+  state.templates = ws.templates || [];
+  const sel = $('project-select');
+  sel.innerHTML = '<option value="">— open project —</option>'
+    + ws.projects.map((p) => `<option value="${p}">${p}</option>`).join('');
+  if (state.project) sel.value = state.project;
+  renderTemplates();
+}
+
+async function openProject(name) {
+  await api('POST', '/api/ide/open', { project: name });
+  state.project = name;
+  state.tabs = [];
+  state.activeTab = null;
+  renderTabs();
+  showEditorPlaceholder();
+  $('project-select').value = name;
+  await refreshTree();
+  showPreview();
+}
+
+async function refreshTree() {
+  if (!state.project) { $('tree').innerHTML = ''; return; }
+  const { tree } = await api('GET', `/api/ide/tree?project=${encodeURIComponent(state.project)}`);
+  const render = (entries) => entries.map((e) => e.type === 'dir'
+    ? `<div><div class="tree-item tree-dir">▸ ${e.name}</div><div class="tree-children">${render(e.children)}</div></div>`
+    : `<div class="tree-item" data-path="${e.path}">${e.name}</div>`).join('');
+  $('tree').innerHTML = render(tree);
+}
+
+$('tree').addEventListener('click', (e) => {
+  const item = e.target.closest('.tree-item');
+  if (item && item.dataset.path) openFile(item.dataset.path);
+});
+
+$('project-select').addEventListener('change', (e) => {
+  if (e.target.value) openProject(e.target.value).catch(alertError);
+});
+
+// ---------------------------------------------------------------------------
+// Tabs + editor
+// ---------------------------------------------------------------------------
+let editor = null;
+
+function showEditorPlaceholder() {
+  if (editor) { editor.destroy(); editor = null; }
+  $('editor-placeholder').style.display = 'flex';
+}
+
+async function openFile(path) {
+  let tab = state.tabs.find((t) => t.path === path);
+  if (!tab) {
+    const payload = await api('GET',
+      `/api/ide/file?project=${encodeURIComponent(state.project)}&path=${encodeURIComponent(path)}`);
+    tab = { path, content: payload.content, savedContent: payload.content };
+    state.tabs.push(tab);
+  }
+  activateTab(tab);
+}
+
+function activateTab(tab) {
+  state.activeTab = tab;
+  renderTabs();
+  $('editor-placeholder').style.display = 'none';
+  if (editor) editor.destroy();
+  editor = editorFactory.create($('editor-host'), {
+    value: tab.content,
+    path: tab.path,
+    onChange: (value) => {
+      tab.content = value;
+      renderTabs();
+    },
+  });
+  editor.focus();
+  document.querySelectorAll('.tree-item').forEach((el) =>
+    el.classList.toggle('active', el.dataset.path === tab.path));
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = state.tabs.map((t) => {
+    const dirty = t.content !== t.savedContent;
+    const active = t === state.activeTab;
+    return `<div class="tab${active ? ' active' : ''}${dirty ? ' dirty' : ''}" data-path="${t.path}">
+      <span class="dot"></span>${t.path}<span class="close" data-close="${t.path}">×</span></div>`;
+  }).join('');
+}
+
+$('tabs').addEventListener('click', (e) => {
+  const closePath = e.target.dataset.close;
+  if (closePath) {
+    const tab = state.tabs.find((t) => t.path === closePath);
+    if (tab && tab.content !== tab.savedContent && !confirm(`Discard unsaved changes to ${closePath}?`)) return;
+    state.tabs = state.tabs.filter((t) => t.path !== closePath);
+    if (state.activeTab && state.activeTab.path === closePath) {
+      state.activeTab = state.tabs[state.tabs.length - 1] || null;
+      if (state.activeTab) activateTab(state.activeTab); else showEditorPlaceholder();
+    }
+    renderTabs();
+    return;
+  }
+  const tabEl = e.target.closest('.tab');
+  if (tabEl) {
+    const tab = state.tabs.find((t) => t.path === tabEl.dataset.path);
+    if (tab) activateTab(tab);
+  }
+});
+
+async function saveActive() {
+  const tab = state.activeTab;
+  if (!tab || !state.project) return;
+  await api('PUT', '/api/ide/file', { project: state.project, path: tab.path, content: tab.content });
+  tab.savedContent = tab.content;
+  renderTabs();
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    saveActive().catch(alertError);
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (state.tabs.some((t) => t.content !== t.savedContent)) e.preventDefault();
+});
+
+// ---------------------------------------------------------------------------
+// Preview
+// ---------------------------------------------------------------------------
+function showPreview() {
+  if (!state.project) return;
+  $('preview-empty').style.display = 'none';
+  const frame = $('preview');
+  frame.style.display = 'block';
+  frame.src = $('preview-url').value || '/';
+}
+
+$('preview-reload').addEventListener('click', showPreview);
+$('preview-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') showPreview(); });
+$('preview-open').addEventListener('click', (e) => { e.currentTarget.href = $('preview-url').value || '/'; });
+
+// ---------------------------------------------------------------------------
+// Build status: HMR websocket (own client — never location.reload) + polling
+// ---------------------------------------------------------------------------
+function setBuild(status, text) {
+  $('build-led').className = `led ${status}`;
+  $('build-text').textContent = text;
+}
+
+function connectWS() {
+  const ws = new WebSocket(`ws://localhost:${IDE_CONFIG.hmrPort}`);
+  ws.onopen = () => { $('ws-led').className = 'led ok'; };
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'reload' || data.type === 'css') {
+      setBuild('ok', 'build ok');
+      hideErrors();
+      // the hmr-client inside the iframe reloads itself for 'reload'
+    } else if (data.type === 'error') {
+      setBuild('error', 'build failed');
+      showError(data);
+    } else if (data.type === 'clear-error') {
+      hideErrors();
+    }
+  };
+  ws.onclose = () => {
+    $('ws-led').className = 'led error';
+    setTimeout(connectWS, 2000); // reconnect — do NOT reload the IDE
+  };
+}
+
+function showError(data) {
+  const box = $('errors');
+  box.classList.add('visible');
+  const location = data.file ? `${data.file}:${data.line || '?'}` : '';
+  box.innerHTML = `<div class="error-line" data-file="${data.file || ''}" data-line="${data.line || 1}">
+    ${location} ${escapeHtml(data.message || 'Unknown error')}</div>`;
+}
+
+function hideErrors() { $('errors').classList.remove('visible'); }
+
+$('errors').addEventListener('click', async (e) => {
+  const line = e.target.closest('.error-line');
+  if (!line || !line.dataset.file) return;
+  await openFile(line.dataset.file);
+  if (editor) editor.gotoLine(parseInt(line.dataset.line, 10) || 1);
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function pollStatus() {
+  try {
+    const status = await api('GET', '/api/ide/status');
+    if (status.build.status === 'building') setBuild('building', 'building…');
+    else if (status.build.status === 'error') setBuild('error', 'build failed');
+    else if (status.build.status === 'ok') setBuild('ok', `build ok (${status.build.ms}ms)`);
+
+    const installing = Object.entries(status.npm)
+      .filter(([, s]) => s === 'installing').map(([n]) => n);
+    if (installing.length) {
+      $('npm-pill').style.display = 'inline-flex';
+      $('npm-text').textContent = `npm install: ${installing.join(', ')}`;
+      state.npmWatch = installing;
+    } else {
+      $('npm-pill').style.display = 'none';
+      if (state.npmWatch && state.npmWatch.length) {
+        // Only report on the installs we watched finish — state.npm keeps
+        // history, so a scan over all entries would surface old failures.
+        const finished = state.npmWatch;
+        state.npmWatch = null;
+        const failed = finished
+          .map((n) => [n, String(status.npm[n] || '')])
+          .find(([, s]) => s.startsWith('failed') || s.startsWith('skipped-no-npm'));
+        if (failed) $('np-note').textContent = `npm: ${failed[1]} — run npm install manually in ${failed[0]}.`;
+        refreshWorkspace().catch(() => {});
+      }
+    }
+    if (status.activeProject && status.activeProject !== state.project) {
+      state.project = status.activeProject;
+      $('project-select').value = state.project;
+      await refreshTree();
+      showPreview();
+    }
+  } catch (err) { /* server briefly busy */ }
+  setTimeout(pollStatus, 1500);
+}
+
+// ---------------------------------------------------------------------------
+// New Project modal
+// ---------------------------------------------------------------------------
+let selectedTemplate = 'app';
+
+function renderTemplates() {
+  $('np-templates').innerHTML = state.templates.map((t) =>
+    `<div class="tpl${t === selectedTemplate ? ' selected' : ''}" data-tpl="${t}">
+       ${t}<small>${TEMPLATE_BLURBS[t] || ''}</small></div>`).join('');
+}
+
+$('np-templates').addEventListener('click', (e) => {
+  const tpl = e.target.closest('.tpl');
+  if (!tpl) return;
+  selectedTemplate = tpl.dataset.tpl;
+  renderTemplates();
+});
+
+$('new-project-btn').addEventListener('click', () => {
+  $('np-note').textContent = '';
+  $('modal-back').classList.add('visible');
+  $('np-name').focus();
+});
+$('np-cancel').addEventListener('click', () => $('modal-back').classList.remove('visible'));
+
+$('np-create').addEventListener('click', async () => {
+  const name = $('np-name').value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    $('np-note').textContent = 'Name must start with a letter/digit and use only letters, digits, ., _, -';
+    return;
+  }
+  try {
+    $('np-note').textContent = 'Creating…';
+    await api('POST', '/api/ide/create', { name, template: selectedTemplate });
+    $('modal-back').classList.remove('visible');
+    // Don't pre-set state.project: pollStatus opens the project (tree +
+    // preview) when the server reports it active after npm install finishes.
+    await refreshWorkspace();
+  } catch (err) {
+    $('np-note').textContent = err.message;
+  }
+});
+
+function alertError(err) { alert(err.message || err); }
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+(async function boot() {
+  editorFactory = await loadEditorFactory();
+  $('editor-kind').textContent = `editor: ${editorFactory.kind}`;
+  connectWS();
+  pollStatus();
+  await refreshWorkspace();
+  if (state.project) {
+    await refreshTree();
+    showPreview();
+  }
+})();
+</script>
+</body>
+</html>

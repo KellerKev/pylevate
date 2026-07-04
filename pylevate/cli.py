@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -29,12 +27,6 @@ app.add_typer(mobile_app, name="mobile")
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-
-# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 
@@ -54,82 +46,24 @@ def init(
     ),
 ) -> None:
     """Scaffold a new PyLevate project."""
-    valid_templates = ("app", "game", "hybrid", "dashboard")
-    # Compilation mode per template — the dashboard template is an app-mode
-    # project (Config.mode has no "dashboard" value).
-    template_modes = {"app": "app", "game": "game", "hybrid": "hybrid", "dashboard": "app"}
-    if template not in valid_templates:
-        console.print(
-            f"[red]Unknown template '[bold]{template}[/bold]'. "
-            f"Choose from: {', '.join(valid_templates)}[/red]"
-        )
-        raise typer.Exit(code=1)
+    from pylevate.scaffold import ScaffoldError, npm_install, scaffold_project
 
-    project_dir = Path.cwd() / name
-    template_dir = TEMPLATES_DIR / template
+    try:
+        with console.status(f"[cyan]Scaffolding project from '{template}' template..."):
+            project_dir = scaffold_project(name, template, Path.cwd(), mobile=mobile)
+    except ScaffoldError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
-    if project_dir.exists():
-        console.print(f"[red]Directory '{name}' already exists.[/red]")
-        raise typer.Exit(code=1)
-
-    if not template_dir.exists() or not any(template_dir.iterdir()):
-        console.print(
-            f"[red]Template directory not found or empty: {template_dir}[/red]"
-        )
-        raise typer.Exit(code=1)
-
-    # -- Copy template files ------------------------------------------------
-    with console.status(f"[cyan]Scaffolding project from '{template}' template..."):
-        shutil.copytree(template_dir, project_dir)
-
-    # -- Write pylevate.config.py ------------------------------------------
-    mode = template_modes[template]
-    config_content = (
-        '"""PyLevate project configuration."""\n'
-        "\n"
-        "from pylevate.config import Config\n"
-        "\n"
-        "config = Config(\n"
-        f'    mode="{mode}",\n'
-        f'    entry="main.py",\n'
-        f'    out_dir="dist/",\n'
-        f"    dev_port=3000,\n"
-        f"    hmr_port=3001,\n"
-        ")\n"
-    )
-    (project_dir / "pylevate.config.py").write_text(config_content)
-
-    # -- Capacitor pre-configuration ---------------------------------------
     if mobile:
-        from pylevate.mobile.capacitor import write_capacitor_config, update_package_json, CapacitorProject
-
-        cap = CapacitorProject(
-            project_dir=project_dir,
-            config=Config(mode=mode, entry="main.py", out_dir="dist/"),
-        )
-        write_capacitor_config(cap)
-        update_package_json(project_dir, ["ios"])
         console.print("[green]Capacitor config created.[/green]")
 
-    # -- npm install (if package.json exists) ------------------------------
-    package_json = project_dir / "package.json"
-    if package_json.exists():
-        with console.status("[cyan]Running npm install..."):
-            try:
-                subprocess.run(
-                    ["npm", "install"],
-                    cwd=project_dir,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            except FileNotFoundError:
-                console.print(
-                    "[yellow]npm not found — skipping dependency install. "
-                    "Run 'npm install' manually.[/yellow]"
-                )
-            except subprocess.CalledProcessError as exc:
-                console.print(f"[red]npm install failed:[/red]\n{exc.stderr}")
+    with console.status("[cyan]Running npm install..."):
+        status, detail = npm_install(project_dir)
+    if status == "skipped-no-npm":
+        console.print(f"[yellow]{detail}[/yellow]")
+    elif status == "failed":
+        console.print(f"[red]npm install failed:[/red]\n{detail}")
 
     console.print(
         Panel(
@@ -177,6 +111,38 @@ def dev(
 
 
 # ---------------------------------------------------------------------------
+# ide
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def ide(
+    workspace: Path = typer.Option(
+        Path("."), "--workspace", "-w",
+        help="Workspace directory (projects are subdirectories with a pylevate.config.py).",
+    ),
+    port: int = typer.Option(3000, "--port", "-p", help="IDE/dev server port."),
+    hmr_port: int = typer.Option(3001, "--hmr-port", help="HMR WebSocket port."),
+    open_browser: bool = typer.Option(False, "--open", "-o", help="Open the IDE in a browser."),
+) -> None:
+    """Launch the browser IDE: create, edit, and run PyLevate projects."""
+    workspace_dir = workspace.resolve()
+    if not workspace_dir.is_dir():
+        console.print(f"[red]Workspace directory not found: {workspace_dir}[/red]")
+        raise typer.Exit(code=1)
+
+    from pylevate.ide.server import IDEServer
+
+    config = Config(mode="app", entry="main.py", out_dir="dist/",
+                    dev_port=port, hmr_port=hmr_port)
+    server = IDEServer(workspace_dir=workspace_dir, config=config)
+    try:
+        server.start(open_browser=open_browser)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]IDE stopped.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
 # playground
 # ---------------------------------------------------------------------------
 
@@ -218,7 +184,7 @@ def playground(
         api_handler, directory=str(playground_dir)
     )
 
-    httpd = http.server.HTTPServer(("localhost", port), api_handler_partial)
+    httpd = http.server.ThreadingHTTPServer(("localhost", port), api_handler_partial)
     console.print(f"[green]Playground listening on http://localhost:{port}[/green]")
 
     import webbrowser
