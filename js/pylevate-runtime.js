@@ -202,6 +202,15 @@ export function page(opts = {}) {
 // A minimal history for preact-router that hides a base path prefix, so an app
 // served under /base/ routes as if it were at the origin root. Implements the
 // surface preact-router uses: `location`, `listen`, `push`, `replace`.
+//
+// preact-router caches the first custom history it sees module-globally and
+// never clears it, so mounting is only deterministic if EVERY App.mount
+// supplies its own history — base '' behaves exactly like the default. Only
+// the most recently created history is live: a single delegating popstate
+// listener ignores stale ones from earlier mounts.
+let _activeHistory = null;
+let _popstateHooked = false;
+
 function _baseHistory(base) {
   const strip = (p) => {
     // Strip only on a path-segment boundary: base '/myapp' must match
@@ -213,8 +222,7 @@ function _baseHistory(base) {
   const loc = () => ({ pathname: strip(window.location.pathname), search: window.location.search });
   const listeners = [];
   const notify = () => { const l = loc(); listeners.slice().forEach((cb) => cb(l)); };
-  window.addEventListener('popstate', notify);
-  return {
+  const api = {
     get location() { return loc(); },
     listen(cb) {
       listeners.push(cb);
@@ -222,7 +230,16 @@ function _baseHistory(base) {
     },
     push(url) { window.history.pushState(null, '', base + url); notify(); },
     replace(url) { window.history.replaceState(null, '', base + url); notify(); },
+    _notify: notify,
   };
+  if (!_popstateHooked) {
+    _popstateHooked = true;
+    window.addEventListener('popstate', () => {
+      if (_activeHistory) _activeHistory._notify();
+    });
+  }
+  _activeHistory = api;
+  return api;
 }
 
 export class App {
@@ -252,16 +269,17 @@ export class App {
       if (meta && meta.title) document.title = meta.title;
     };
     // Honour a <base href> so routes match when the app is served under a
-    // sub-path (e.g. a hosted preview at /.../pylevate-preview/) rather than the
-    // origin root. preact-router 4.x has no `base` prop, so give it a custom
-    // history whose location is stripped of the base prefix.
-    const routerProps = { onChange };
+    // sub-path (e.g. a hosted preview at /.../pylevate-preview/) rather than
+    // the origin root. preact-router 4.x has no `base` prop, so give it a
+    // custom history whose location is stripped of the base prefix. Always
+    // pass one (base '' = origin root): preact-router latches the first
+    // custom history forever, so an explicit history per mount is the only
+    // way to keep repeated mounts deterministic.
     const baseEl = document.querySelector('base[href]');
-    if (baseEl) {
-      const basePath = new URL(baseEl.href).pathname.replace(/\/$/, '');
-      if (basePath) routerProps.history = _baseHistory(basePath);
-    }
-    render(h(PreactRouter, routerProps, children), target);
+    const basePath = baseEl
+      ? new URL(baseEl.href).pathname.replace(/\/$/, '')
+      : '';
+    render(h(PreactRouter, { onChange, history: _baseHistory(basePath) }, children), target);
   }
 
   _injectTheme(href) {

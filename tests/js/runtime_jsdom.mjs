@@ -62,10 +62,6 @@ function clickLink(href) {
   render(null, target);
 }
 
-// NOTE on test order: preact-router keeps a module-global custom history that
-// is set by the first Router mounted with a `history` prop and never cleared.
-// Root-path routing tests must therefore run BEFORE the <base href> tests.
-
 // Shared routed pages for the router tests
 const Home = page({ title: 'Home T', route: '/' })(
   () => h('div', null, h('h1', null, 'HOME'), h('a', { href: '/stats' }, 'to stats')),
@@ -138,6 +134,27 @@ const routes = () => new Router([['/', Home], ['/stats', Stats]]);
 
   base.remove();
   dom.reconfigure({ url: 'https://app.test/' });
+}
+
+// ---------------------------------------------------------------------------
+// Mount order independence: preact-router latches the first custom history
+// module-globally, so App.mount always supplies its own. A root mount AFTER
+// a <base href> mount must not inherit the stale base.
+// ---------------------------------------------------------------------------
+{
+  dom.reconfigure({ url: 'https://app.test/' });
+  const target = freshContainer();
+  new App({ router: routes() }).mount('#app');
+  await tick();
+  assert.equal(target.querySelector('h1').textContent, 'HOME',
+    'root mount after a base-path mount must route at the origin root');
+
+  clickLink('/stats');
+  await tick();
+  assert.equal(target.querySelector('h1').textContent, 'STATS');
+  assert.equal(window.location.pathname, '/stats',
+    'navigation must not re-add the stale /myapp base');
+  render(null, target);
 }
 
 // ---------------------------------------------------------------------------
