@@ -204,7 +204,10 @@ export function page(opts = {}) {
 // surface preact-router uses: `location`, `listen`, `push`, `replace`.
 function _baseHistory(base) {
   const strip = (p) => {
-    const s = p.indexOf(base) === 0 ? p.slice(base.length) : p;
+    // Strip only on a path-segment boundary: base '/myapp' must match
+    // '/myapp' and '/myapp/x' but not '/myapplication/x'.
+    const isBase = p === base || p.startsWith(base + '/');
+    const s = isBase ? p.slice(base.length) : p;
     return s.charAt(0) === '/' ? s : '/' + s;
   };
   const loc = () => ({ pathname: strip(window.location.pathname), search: window.location.search });
