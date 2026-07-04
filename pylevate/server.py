@@ -7,7 +7,7 @@ import functools
 import mimetypes
 import webbrowser
 from http import HTTPStatus
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from typing import Set
@@ -49,7 +49,14 @@ class _HMRHTTPRequestHandler(SimpleHTTPRequestHandler):
         pass
 
     def do_POST(self) -> None:  # noqa: N802
-        """Handle POST /api/compile for the playground."""
+        """Handle POST /api/compile (playground) and /api/llm/* (LLM proxy)."""
+        clean_path = self.path.split("?")[0]
+        if clean_path.startswith("/api/llm/"):
+            from pylevate.ide.llm_proxy import handle_llm_proxy
+
+            handle_llm_proxy(self, clean_path[len("/api/llm/"):])
+            return
+
         if self.path == "/api/compile":
             import json
             content_len = int(self.headers.get("Content-Length", 0))
@@ -107,6 +114,13 @@ class _HMRHTTPRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        # API and framework routes never fall back to the SPA's index.html —
+        # an unknown endpoint must 404, not return HTML with a 200.
+        clean_path = self.path.split("?")[0]
+        if clean_path.startswith(("/api/", "/__pylevate/")):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
         path = self.translate_path(self.path)
         # Serve index.html for directory requests
         if Path(path).is_dir():
@@ -162,16 +176,27 @@ class _ChangeHandler(FileSystemEventHandler):
         self._loop = loop
         self._queue = queue
 
-    def on_modified(self, event: FileSystemEvent) -> None:
-        if event.is_directory:
-            return
-        src = Path(event.src_path)
+    def _enqueue(self, path_str: str) -> None:
+        src = Path(path_str)
         # Skip build artifacts and node_modules
-        src_str = str(src)
-        if any(d in src_str for d in ("/dist/", "/build_tmp/", "/node_modules/", "/.pixi/")):
+        if any(d in path_str for d in ("/dist/", "/build_tmp/", "/node_modules/", "/.pixi/")):
             return
         if src.suffix in (".py", ".css"):
             self._loop.call_soon_threadsafe(self._queue.put_nowait, src)
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._enqueue(event.src_path)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._enqueue(event.src_path)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        # Atomic saves (tmp file + os.replace / editor rename) arrive as moves;
+        # the destination is the file that changed.
+        if not event.is_directory:
+            self._enqueue(getattr(event, "dest_path", event.src_path))
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +213,7 @@ class DevServer:
         self.serve_dir = self.project_dir / config.out_dir / "web"
         self._ws_clients: Set[websockets.WebSocketServerProtocol] = set()
         self._change_queue: asyncio.Queue[Path] = asyncio.Queue()
+        self._build_lock = asyncio.Lock()
 
     # -- public API ---------------------------------------------------------
 
@@ -260,7 +286,9 @@ class DevServer:
             {"hmr_port": self.config.hmr_port},
         )
         handler = functools.partial(handler_cls, directory=str(self.serve_dir))
-        httpd = HTTPServer(("localhost", self.config.dev_port), handler)
+        # Threading is required: streaming responses (e.g. the /api/llm proxy)
+        # hold a connection open for minutes and must not block other requests.
+        httpd = ThreadingHTTPServer(("localhost", self.config.dev_port), handler)
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         return thread
@@ -287,10 +315,14 @@ class DevServer:
                 except asyncio.QueueEmpty:
                     break
 
-            console.print(
-                f"[cyan]Change detected:[/cyan] "
-                f"{changed_file.relative_to(self.project_dir)}"
-            )
+            # Events can outlive a project switch (IDE) or reference a path
+            # moved out of the tree — drop anything outside the current root.
+            try:
+                rel = changed_file.relative_to(self.project_dir)
+            except ValueError:
+                continue
+
+            console.print(f"[cyan]Change detected:[/cyan] {rel}")
 
             # Rebuild via the compiler pipeline
             success = await self._rebuild(changed_file)
@@ -300,24 +332,29 @@ class DevServer:
                 await self._notify_clients(msg_type, str(changed_file.name))
 
     async def _rebuild(self, changed_file: Path | None = None) -> bool:
-        """Rebuild the project. Returns True on success."""
+        """Rebuild the project. Returns True on success.
+
+        Serialized: Pipeline.build() clears and repopulates build_tmp/dist,
+        so two builds must never run concurrently against the same project.
+        """
         import time as _time
 
         try:
             from pylevate.compiler.pipeline import Pipeline
 
-            t0 = _time.perf_counter()
-            pipeline = Pipeline(project_dir=self.project_dir, config=self.config)
-            loop = asyncio.get_running_loop()
+            async with self._build_lock:
+                t0 = _time.perf_counter()
+                pipeline = Pipeline(project_dir=self.project_dir, config=self.config)
+                loop = asyncio.get_running_loop()
 
-            if changed_file and hasattr(pipeline, "rebuild"):
-                result = await loop.run_in_executor(
-                    None, pipeline.rebuild, changed_file
-                )
-            else:
-                result = await loop.run_in_executor(None, pipeline.build)
+                if changed_file and hasattr(pipeline, "rebuild"):
+                    result = await loop.run_in_executor(
+                        None, pipeline.rebuild, changed_file
+                    )
+                else:
+                    result = await loop.run_in_executor(None, pipeline.build)
 
-            elapsed = (_time.perf_counter() - t0) * 1000
+                elapsed = (_time.perf_counter() - t0) * 1000
 
             for warning in result.warnings:
                 console.print(f"  [yellow]warning: {warning}[/yellow]")

@@ -19,6 +19,7 @@ dev = "python -m pylevate.cli dev"
 build = "python -m pylevate.cli build"
 test = "python -m pytest tests/ -v"
 init = "python -m pylevate.cli init"
+ide = "python -m pylevate.cli ide"
 
 [feature.test.pypi-dependencies]
 pytest = ">=7"
