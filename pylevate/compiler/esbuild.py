@@ -9,6 +9,8 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pylevate._paths import framework_js_dir
+
 log = logging.getLogger(__name__)
 
 
@@ -36,7 +38,9 @@ def _generate_runner_script(
     """Write a temporary esbuild runner to *build_tmp/_esbuild_runner.mjs*."""
     runner_path = build_tmp / "_esbuild_runner.mjs"
 
-    js_dir = framework_dir / "js"
+    # Resolve js/ in a layout-agnostic way (packaged wheel vs editable source);
+    # framework_dir alone is only correct for a source checkout.
+    js_dir = framework_js_dir()
     baselib_path = (js_dir / "baselib.js").as_posix()
 
     # Build the alias map fed to esbuild: every framework runtime file is

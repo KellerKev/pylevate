@@ -18,6 +18,7 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
 
 from pylevate.config import Config
+from pylevate._paths import framework_js_dir
 
 console = Console()
 
@@ -27,7 +28,7 @@ console = Console()
 # served by this dev server at /__pylevate/hmr-client.js.
 # ---------------------------------------------------------------------------
 
-_FRAMEWORK_JS_DIR = Path(__file__).resolve().parent.parent / "js"
+_FRAMEWORK_JS_DIR = framework_js_dir()
 
 HMR_CLIENT_SCRIPT = """\
 <script>window.__PYLEVATE_HMR_PORT__ = __HMR_PORT__;</script>
