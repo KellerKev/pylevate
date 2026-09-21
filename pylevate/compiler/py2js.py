@@ -280,6 +280,9 @@ class _JSEmitter(ast.NodeVisitor):
         self._class_has_get_context: dict[str, bool] = {}  # class -> has get_context?
         self._class_context_keys: dict[str, list[str]] = {}  # class -> keys get_context adds to props
         self._declared_vars: list[set[str]] = [set()]  # stack of scopes
+        # Index in _declared_vars of the innermost method's own scope: names bound from there
+        # on (parameters, assignments) are that method's locals and shadow state fields.
+        self._method_scope_base: int | None = None
 
     # -- Helpers -----------------------------------------------------------
 
@@ -1236,6 +1239,9 @@ class _JSEmitter(ast.NodeVisitor):
         old_in_method = self._in_method
         self._in_method = is_method
         self._push_scope()
+        old_method_base = self._method_scope_base
+        if is_method:
+            self._method_scope_base = len(self._declared_vars) - 1
 
         # Add parameters to declared vars so they won't get `let` inside body
         strip_self = is_method and not is_static
@@ -1288,6 +1294,7 @@ class _JSEmitter(ast.NodeVisitor):
 
         self._pop_scope()
         self._in_method = old_in_method
+        self._method_scope_base = old_method_base
 
         # Apply non-property decorators
         if not is_method and applied_decorators:
@@ -1843,13 +1850,22 @@ class _JSEmitter(ast.NodeVisitor):
             return "true"
         if name == "False":
             return "false"
-        # Check if reading a state field
+        # A bare state-field name inside a method reads the state (shorthand for self.x) —
+        # unless the method has its own local of that name (a parameter, or an assignment
+        # already made in it), which shadows the field exactly as Python scoping would.
         if (self.mode in ("app", "hybrid")
                 and self._in_class
                 and self._in_method
+                and not self._is_method_local(name)
                 and name in [f for f, _ in self._class_state_fields.get(self._in_class, [])]):
             return f"this._{name}.value"
         return name
+
+    def _is_method_local(self, name: str) -> bool:
+        base = self._method_scope_base
+        if base is None:
+            return False
+        return any(name in scope for scope in self._declared_vars[base:])
 
     def _expr_Attribute(self, node: ast.Attribute) -> str:
         value_js = self._expr(node.value)

@@ -200,6 +200,42 @@ class Counter(Component):
         assert "signal(0)" in js
         assert "this._count.value" in js
 
+    def test_bare_state_name_reads_state(self):
+        js = _js("""
+class Counter(Component):
+    count = state(0)
+    def show(self):
+        print(count)
+""")
+        assert "console.log(this._count.value)" in js
+
+    def test_local_shadows_state_field(self):
+        # a local named like a state field is the local, as in Python — the regression was
+        # `me = await getMe(); if me['signed_in']` reading the state's initial value
+        js = _js("""
+class Page(Component):
+    me = state(0)
+    async def on_mount(self):
+        me = await getMe()
+        if not me['signed_in']:
+            return
+        self.me = me['account']['id']
+""")
+        assert "let me = await getMe();" in js
+        assert "__truthy(me['signed_in'])" in js
+        assert "this._me.value = me['account']['id'];" in js
+        assert "this._me.value['signed_in']" not in js
+
+    def test_parameter_shadows_state_field(self):
+        js = _js("""
+class Page(Component):
+    name = state('')
+    def greet(self, name):
+        return 'hi ' + name
+""")
+        assert "'hi ' + name" in js
+        assert "this._name.value" not in js.split("greet(")[1]
+
 
 class TestBuiltins:
     def test_print(self):
