@@ -92,6 +92,12 @@ class Pipeline:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(js_src, dst)
 
+        # 4b. ...and the project's .css files next to them, so a hand-written module can
+        # `import './widget.css'` and have it bundled (and hashed) like component CSS.
+        # A stylesheet a compiled component already generated at that path wins.
+        if js_sources:
+            self._copy_css_into_build()
+
         if errors:
             return BuildResult(
                 success=False,
@@ -210,6 +216,9 @@ class Pipeline:
             if any(p.startswith(".") for p in parts):
                 continue
             if "build_tmp" in parts or self.config.out_dir.rstrip("/") in parts:
+                continue
+            # npm packages ship .py helpers (katex has font scripts); they are not ours
+            if "node_modules" in parts or "dist" in parts:
                 continue
             if py_file.name in _EXCLUDED_FILENAMES:
                 continue
@@ -338,6 +347,23 @@ class Pipeline:
         if modified:
             js_path.write_text(js_code, encoding="utf-8")
         return errors
+
+    def _copy_css_into_build(self) -> None:
+        """Mirror project .css files into build_tmp without clobbering generated ones."""
+        for css_file in sorted(self.project_dir.rglob("*.css")):
+            rel = css_file.relative_to(self.project_dir)
+            parts = rel.parts
+            if any(p.startswith(".") for p in parts):
+                continue
+            if "build_tmp" in parts or "node_modules" in parts or "dist" in parts:
+                continue
+            if self.config.out_dir.rstrip("/") in parts:
+                continue
+            dst = self.build_tmp / rel
+            if dst.exists():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(css_file, dst)
 
     def _discover_js_sources(self) -> list[Path]:
         """Return .js source files in the project (for Phase 1 hand-written JS)."""

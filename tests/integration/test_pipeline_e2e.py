@@ -188,3 +188,42 @@ class TestCompileOnly:
         js_path, errors, _ = pipeline._compile_file(sources[0], modules=modules, packages=packages)
         assert js_path is None
         assert any("missing/widget.py" in e for e in errors)
+
+
+class TestSourceDiscovery:
+    """Which files the pipeline treats as project sources."""
+
+    def test_node_modules_python_is_not_compiled(self, tmp_path):
+        # npm packages can ship .py helpers (katex ships font scripts); compiling them
+        # fails the build with unresolvable imports
+        proj = tmp_path.resolve() / "p"
+        (proj / "node_modules" / "katex" / "src").mkdir(parents=True)
+        (proj / "node_modules" / "katex" / "src" / "fonts.py").write_text("from fontTools.ttLib import TTFont\n")
+        (proj / "main.py").write_text("x = 1\n")
+        pipeline = Pipeline(project_dir=proj, config=Config(mode="app"))
+        names = [p.relative_to(proj).as_posix() for p in pipeline._discover_sources()]
+        assert names == ["main.py"]
+
+    def test_css_next_to_handwritten_js_is_copied_into_build(self, tmp_path):
+        proj = tmp_path.resolve() / "p"
+        (proj / "ui").mkdir(parents=True)
+        (proj / "ui" / "widget.js").write_text("import './widget.css';\nexport const W = 1;\n")
+        (proj / "ui" / "widget.css").write_text(".w { color: red; }\n")
+        (proj / "node_modules" / "pkg").mkdir(parents=True)
+        (proj / "node_modules" / "pkg" / "x.css").write_text(".x {}\n")
+        pipeline = Pipeline(project_dir=proj, config=Config(mode="app"))
+        pipeline._prepare_build_dir(clean=True)
+        pipeline._copy_css_into_build()
+        assert (proj / "build_tmp" / "ui" / "widget.css").read_text() == ".w { color: red; }\n"
+        assert not (proj / "build_tmp" / "node_modules").exists()
+
+    def test_generated_css_is_not_overwritten(self, tmp_path):
+        proj = tmp_path.resolve() / "p"
+        (proj / "pages").mkdir(parents=True)
+        (proj / "pages" / "home.css").write_text(".hand {}\n")
+        pipeline = Pipeline(project_dir=proj, config=Config(mode="app"))
+        pipeline._prepare_build_dir(clean=True)
+        (proj / "build_tmp" / "pages").mkdir(parents=True)
+        (proj / "build_tmp" / "pages" / "home.css").write_text(".generated {}\n")
+        pipeline._copy_css_into_build()
+        assert (proj / "build_tmp" / "pages" / "home.css").read_text() == ".generated {}\n"
