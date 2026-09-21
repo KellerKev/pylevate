@@ -43,3 +43,30 @@ class TestApplyClassMap:
         result = apply_class_map(js, {"card": "card-abc123"})
         assert '"card-abc123"' in result
         assert "styles.card" not in result
+
+    def test_classname_literal_whole_tokens(self):
+        js = "h('a', {className: 'lnk lnk-hide'})"
+        result = apply_class_map(js, {"lnk": "lnk-abc123", "lnk-hide": "lnk-hide-abc123"})
+        assert "className: 'lnk-abc123 lnk-hide-abc123'" in result
+
+    def test_prefix_class_does_not_clobber_longer_name(self):
+        js = "h('a', {className: 'card-header'})"
+        result = apply_class_map(js, {"card": "card-abc123", "card-header": "card-header-abc123"})
+        assert "className: 'card-header-abc123'" in result
+
+    def test_expression_starting_with_styles_ref_scoped_once(self):
+        js = "h('a', {className: styles.ws + (on ? ' ' + styles.awake : '')})"
+        result = apply_class_map(js, {"ws": "ws-abc123", "awake": "awake-abc123"})
+        assert 'className: "ws-abc123" + (on ? \' \' + "awake-abc123" : \'\')' in result
+        assert "abc123-abc123" not in result
+
+    def test_styles_ref_matches_whole_identifier(self):
+        js = "h('a', {className: styles.btnGroup, title: styles.btn})"
+        result = apply_class_map(js, {"btn": "btn-abc123"})
+        assert "styles.btnGroup" in result
+        assert 'title: "btn-abc123"' in result
+
+    def test_unknown_classes_left_alone(self):
+        js = "h('a', {className: 'external lnk'})"
+        result = apply_class_map(js, {"lnk": "lnk-abc123"})
+        assert "className: 'external lnk-abc123'" in result

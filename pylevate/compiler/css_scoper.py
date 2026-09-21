@@ -29,26 +29,30 @@ def apply_class_map(js_source: str, class_map: dict[str, str]) -> str:
     """Replace class name references in JS source using the class map.
 
     Only replaces in className attribute contexts and styles.xxx references.
-    """
-    result = js_source
-    for original, scoped in class_map.items():
-        # Replace styles.xxx references
-        result = result.replace(f"styles.{original}", f'"{scoped}"')
 
-    # Replace class names inside className: '...' attribute values.
-    # Matches className: 'value' and replaces known class names within the value.
+    Two passes, in this order, each touching a name exactly once:
+      1. Quoted ``className: '...'`` values: every whitespace-separated token that is a
+         known class is swapped whole. Matching whole tokens (not word boundaries) keeps
+         ``lnk`` from rewriting the ``lnk`` inside ``lnk-hide``.
+      2. ``styles.xxx`` references. Running this after pass 1 means a className
+         expression that starts with ``styles.x`` is not scoped a second time
+         (``"x-abc123"`` would otherwise match pass 1 and become ``x-abc123-abc123``).
+    """
+    if not class_map:
+        return js_source
+
     def replace_in_classname(m: re.Match) -> str:
-        prefix = m.group(1)  # "className: '"
-        value = m.group(2)   # the class name(s)
-        quote = m.group(3)   # closing quote
-        # Replace each known class name in the value (handles space-separated lists)
-        for original, scoped in class_map.items():
-            value = re.sub(rf"\b{re.escape(original)}\b", scoped, value)
+        prefix, value, quote = m.group(1), m.group(3), m.group(4)
+        value = re.sub(r"\S+", lambda t: class_map.get(t.group(0), t.group(0)), value)
         return f"{prefix}{value}{quote}"
 
-    result = re.sub(
-        r"""(className:\s*['"])([^'"]+)(['"])""",
-        replace_in_classname,
-        result,
-    )
-    return result
+    result = re.sub(r"""(className:\s*(['"]))((?:(?!\2).)+?)(\2)""", replace_in_classname, js_source)
+
+    def replace_ref(m: re.Match) -> str:
+        scoped = class_map.get(m.group(1))
+        return f'"{scoped}"' if scoped is not None else m.group(0)
+
+    # an identifier after ``styles.`` — the whole identifier, so styles.btn never
+    # rewrites the front of styles.btnGroup
+    return re.sub(r"\bstyles\.([A-Za-z_$][\w$]*)", replace_ref, result)
+
