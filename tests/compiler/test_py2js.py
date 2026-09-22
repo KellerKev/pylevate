@@ -165,6 +165,19 @@ class TestFunctions:
         assert "async function fetch_data()" in js
         assert "await get_data()" in js
 
+    def test_awaited_value_keeps_parens_when_indexed_or_accessed(self):
+        # `await f()[k]` would await `f()[k]` (undefined) instead of indexing the result.
+        js = _js("async def load():\n    rows = (await get_rows())['rows']\n"
+                 "    n = (await get_rows()).length\n    first = (await get_rows())[0]")
+        assert "(await get_rows())['rows']" in js or '(await get_rows())["rows"]' in js
+        assert "(await get_rows()).length" in js
+        assert "(await get_rows())[0]" in js
+        assert "await get_rows()[" not in js
+
+    def test_plain_await_stays_unparenthesized(self):
+        js = _js("async def load():\n    rows = await get_rows()")
+        assert "await get_rows();" in js and "(await" not in js
+
     def test_lambda(self):
         js = _js("f = lambda x: x + 1")
         assert "=>" in js

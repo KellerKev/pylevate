@@ -1867,8 +1867,17 @@ class _JSEmitter(ast.NodeVisitor):
             return False
         return any(name in scope for scope in self._declared_vars[base:])
 
+    def _operand(self, node: ast.AST) -> str:
+        """An expression used as the object of `.attr` or `[index]`.
+
+        `await` binds looser than member access in JS, so `(await f())[k]` must keep its
+        parentheses: `await f()[k]` awaits `f()[k]`, which is undefined.
+        """
+        js = self._expr(node)
+        return f"({js})" if isinstance(node, ast.Await) else js
+
     def _expr_Attribute(self, node: ast.Attribute) -> str:
-        value_js = self._expr(node.value)
+        value_js = self._operand(node.value)
         attr = node.attr
 
         # self.x -> this.x (with state signal awareness)
@@ -1890,7 +1899,7 @@ class _JSEmitter(ast.NodeVisitor):
         return f"{value_js}.{attr}"
 
     def _expr_Subscript(self, node: ast.Subscript) -> str:
-        value_js = self._expr(node.value)
+        value_js = self._operand(node.value)
         sl = node.slice
 
         # Slice
