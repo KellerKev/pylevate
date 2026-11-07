@@ -133,6 +133,18 @@ if (typeof globalThis.__truthy === 'undefined') {
   };
 }
 
+// A computed class attribute: className: __cls(expr). A module with scoped CSS defines its
+// own __cls that maps each class token through its class map; elsewhere it is the value.
+if (typeof globalThis.__cls === 'undefined') {
+  globalThis.__cls = function __cls(v) { return v; };
+}
+if (typeof globalThis.__scopeClass === 'undefined') {
+  globalThis.__scopeClass = function __scopeClass(v, map) {
+    if (typeof v !== 'string') return v;
+    return v.split(/(\s+)/).map((t) => (Object.hasOwn(map, t) ? map[t] : t)).join('');
+  };
+}
+
 // dict / list / tuple helpers
 if (typeof globalThis.dict === 'undefined') {
   globalThis.dict = function dict(entries) {

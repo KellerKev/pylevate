@@ -1,6 +1,7 @@
 """CSS scoping — hash-suffix class names per file path."""
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -28,7 +29,9 @@ def scope(css_source: str, file_path: Path) -> tuple[str, dict[str, str]]:
 def apply_class_map(js_source: str, class_map: dict[str, str]) -> str:
     """Replace class name references in JS source using the class map.
 
-    Only replaces in className attribute contexts and styles.xxx references.
+    Only replaces in className attribute contexts and styles.xxx references. A computed
+    ``className: __cls(...)`` is scoped at runtime: the module gets its own ``__cls`` that
+    knows the map (baselib's global one returns the value unchanged).
 
     Two passes, in this order, each touching a name exactly once:
       1. Quoted ``className: '...'`` values: every whitespace-separated token that is a
@@ -54,5 +57,10 @@ def apply_class_map(js_source: str, class_map: dict[str, str]) -> str:
 
     # an identifier after ``styles.`` — the whole identifier, so styles.btn never
     # rewrites the front of styles.btnGroup
-    return re.sub(r"\bstyles\.([A-Za-z_$][\w$]*)", replace_ref, result)
+    result = re.sub(r"\bstyles\.([A-Za-z_$][\w$]*)", replace_ref, result)
+
+    if "__cls(" in result:
+        result = (f"const __cls = (v) => __scopeClass(v, {json.dumps(class_map, sort_keys=True)});\n"
+                  + result)
+    return result
 

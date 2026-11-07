@@ -153,6 +153,84 @@ class C(Component):
         assert js.count("h('span'") == 2
 
 
+class TestControlOnElements:
+    def test_if_on_plain_element(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {
+        h.div(): {
+            h.p(If='not ok', Class='err'): 'Failed',
+        }
+    }
+""")
+        assert "(!__truthy(ok) ? h('p', {className: 'err'}, 'Failed') : null)" in js
+
+    def test_if_elif_else_on_elements(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {
+        h.div(): {
+            h.span(If='a'): 'A',
+            h.em(Elif='b'): 'B',
+            h.b(Else=''): 'C',
+        }
+    }
+""")
+        assert "(a ? h('span', null, 'A') : (b ? h('em', null, 'B') : h('b', null, 'C')))" in js
+        assert js.count("h('em'") == 1 and js.count("h('b'") == 1
+
+    def test_for_on_element(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {
+        h.ul(): {
+            h.li(For='x in xs', key={'x'}): '[[x]]',
+        }
+    }
+""")
+        assert "xs.map((x) => h('li', {key: x}, `${x}`))" in js
+
+    def test_if_on_component(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {
+        h.div(): {
+            Nav(If='signed_in', me={'who'}): None,
+        }
+    }
+""")
+        assert "(signed_in ? h(Nav, {me: who}) : null)" in js
+
+
+class TestComputedClass:
+    def test_literal_class_stays_static(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {h.div(Class='card'): None}
+""")
+        assert "className: 'card'" in js
+        assert "__cls" not in js
+
+    def test_computed_class_is_scoped_at_runtime(self):
+        js = _js("""
+from pylevate import Component, h
+
+class C(Component):
+    template = {h.span(Class={'"pill " + state'}): None}
+""")
+        assert 'className: __cls("pill " + state)' in js
+
+
 class TestSlots:
     def test_default_slot(self):
         js = _js("""

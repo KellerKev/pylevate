@@ -193,6 +193,10 @@ _CMPOP_MAP = {
     ast.NotIn: None,  # special-cased
 }
 
+# Expressions that bind looser than any JS operator pylevate emits around them, so they need
+# parentheses back wherever they are an operand (the AST keeps none of the source's).
+_LOOSE = (ast.BoolOp, ast.Lambda, ast.Yield)
+
 _BOOLOP_MAP = {
     ast.And: "&&",
     ast.Or:  "||",
@@ -760,9 +764,13 @@ class _JSEmitter(ast.NodeVisitor):
 
     def _compile_template_entry(
         self, key: ast.expr, value: ast.expr,
-        all_keys: list, all_values: list, index: int
+        all_keys: list, all_values: list, index: int, bare: bool = False
     ) -> str:
-        """Compile a single key:value pair from the template dict."""
+        """Compile a single key:value pair from the template dict.
+
+        `bare` compiles an element without its own For/If/Elif/Else (the control
+        wrapping it does that part).
+        """
         if key is None:
             # {**spread} — shouldn't appear in templates, skip
             return "null"
@@ -771,8 +779,8 @@ class _JSEmitter(ast.NodeVisitor):
         tag_name, attrs, control = self._parse_template_key(key)
 
         # Handle control flow: h.Template(For=...), h.Template(If=...), etc.
-        if tag_name == "Template":
-            return self._compile_template_control(control, value, all_keys, all_values, index)
+        if tag_name == "Template" or (control and not bare):
+            return self._compile_template_control(control, value, all_keys, all_values, index, key)
 
         # Handle slot definitions: S.name.slot() → renders children or named slot prop
         if self._is_slot_call(key):
@@ -850,7 +858,12 @@ class _JSEmitter(ast.NodeVisitor):
                         if kw.arg in ("For", "If", "Elif", "Else", "Is"):
                             control[kw.arg] = kw.value
                     return "Template", list(key.keywords), control
-                return f"'{tag_name}'", list(key.keywords), control
+            # an element or component can carry For/If/Elif/Else itself: h.li(For='x in xs')
+            for kw in key.keywords:
+                if kw.arg in ("For", "If", "Elif", "Else"):
+                    control[kw.arg] = kw.value
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "h":
+                return f"'{func.attr}'", list(key.keywords), control
             # ComponentName(...)
             elif isinstance(func, ast.Name):
                 return func.id, list(key.keywords), control
@@ -890,6 +903,10 @@ class _JSEmitter(ast.NodeVisitor):
 
             value_node = kw.value
             val_js = self._compile_template_attr_value(value_node)
+            if js_attr == "className" and not (
+                    isinstance(value_node, ast.Constant) and isinstance(value_node.value, (str, bytes))):
+                # only a literal can be scoped at build time; __cls scopes the rest at runtime
+                val_js = f"__cls({val_js})"
             pairs.append(f"{js_attr}: {val_js}")
 
         if not pairs:
@@ -952,12 +969,18 @@ class _JSEmitter(ast.NodeVisitor):
         # Anything else → compile as expression
         return self._expr(value)
 
+    def _compile_template_body(self, key: ast.expr, value: ast.expr) -> str:
+        """What a For/If/Elif/Else renders: a Template's children, or the element itself."""
+        if self._parse_template_key(key)[0] == "Template":
+            return self._compile_template_value(value)
+        return self._compile_template_entry(key, value, [], [], 0, bare=True)
+
     def _compile_template_control(
         self, control: dict, value: ast.expr,
-        all_keys: list, all_values: list, index: int
+        all_keys: list, all_values: list, index: int, key: ast.expr
     ) -> str:
-        """Compile Template control flow directives (For, If, Elif, Else, Is)."""
-        children = self._compile_template_value(value)
+        """Compile control flow directives (For, If, Elif, Else, Is) on a Template or element."""
+        children = self._compile_template_body(key, value)
 
         if "For" in control:
             for_node = control["For"]
@@ -1008,12 +1031,12 @@ class _JSEmitter(ast.NodeVisitor):
             if isinstance(next_key, ast.Call):
                 _, _, next_control = self._parse_template_key(next_key)
                 if "Elif" in next_control:
-                    next_children = self._compile_template_value(all_values[next_idx])
+                    next_children = self._compile_template_body(next_key, all_values[next_idx])
                     cond = self._compile_template_condition(next_control["Elif"])
                     else_part = self._compile_template_elif_chain(all_keys, all_values, next_idx)
                     return f"({cond} ? {next_children} : {else_part})"
                 if "Else" in next_control:
-                    return self._compile_template_value(all_values[next_idx])
+                    return self._compile_template_body(next_key, all_values[next_idx])
         return "null"
 
     def _compile_template_condition(self, node: ast.expr) -> str:
@@ -1868,13 +1891,21 @@ class _JSEmitter(ast.NodeVisitor):
         return any(name in scope for scope in self._declared_vars[base:])
 
     def _operand(self, node: ast.AST) -> str:
-        """An expression used as the object of `.attr` or `[index]`.
+        """An expression used as the object of `.attr`, `[index]` or a call.
 
-        `await` binds looser than member access in JS, so `(await f())[k]` must keep its
-        parentheses: `await f()[k]` awaits `f()[k]`, which is undefined.
+        Python's AST has no parentheses, so a looser expression must get them back here:
+        `await f()[k]` awaits `f()[k]`, which is undefined, and `a || b.x` reads `b.x`.
         """
         js = self._expr(node)
-        return f"({js})" if isinstance(node, ast.Await) else js
+        return f"({js})" if isinstance(node, (ast.Await, ast.UnaryOp, ast.Compare, *_LOOSE)) else js
+
+    def _tight(self, node: ast.AST) -> str:
+        """An operand of a comparison, a unary operator or `and`/`or`.
+
+        `a and (b or c)` must not become `a && b || c`, nor `-(a or b)` become `-a || b`.
+        """
+        js = self._expr(node)
+        return f"({js})" if isinstance(node, _LOOSE) else js
 
     def _expr_Attribute(self, node: ast.Attribute) -> str:
         value_js = self._operand(node.value)
@@ -2306,12 +2337,12 @@ class _JSEmitter(ast.NodeVisitor):
 
     def _expr_BoolOp(self, node: ast.BoolOp) -> str:
         op = _BOOLOP_MAP[type(node.op)]
-        parts = [self._expr(v) for v in node.values]
+        parts = [self._tight(v) for v in node.values]
         return f" {op} ".join(parts)
 
     def _expr_BinOp(self, node: ast.BinOp) -> str:
-        left = self._expr(node.left)
-        right = self._expr(node.right)
+        left = self._tight(node.left)
+        right = self._tight(node.right)
         op_type = type(node.op)
 
         if op_type == ast.FloorDiv:
@@ -2330,26 +2361,27 @@ class _JSEmitter(ast.NodeVisitor):
         # `not x` needs Python truthiness so `not []` is True.
         if isinstance(node.op, ast.Not):
             return f"!__truthy({self._expr(node.operand)})"
-        operand = self._expr(node.operand)
+        operand = self._tight(node.operand)
         return f"{op}{operand}"
 
     def _expr_Compare(self, node: ast.Compare) -> str:
         parts: list[str] = []
-        left = self._expr(node.left)
+        left, left_node = self._tight(node.left), node.left
 
         for op, comparator in zip(node.ops, node.comparators):
-            right = self._expr(comparator)
+            right = self._tight(comparator)
             op_type = type(op)
 
-            if op_type == ast.In:
-                parts.append(f"{right}.includes({left})")
-            elif op_type == ast.NotIn:
-                parts.append(f"!{right}.includes({left})")
+            if op_type in (ast.In, ast.NotIn):
+                container = self._operand(comparator)
+                member = self._expr(left_node)
+                neg = "!" if op_type == ast.NotIn else ""
+                parts.append(f"{neg}{container}.includes({member})")
             else:
                 js_op = _CMPOP_MAP.get(op_type, "===")
                 parts.append(f"{left} {js_op} {right}")
 
-            left = right
+            left, left_node = right, comparator
 
         return " && ".join(parts) if len(parts) > 1 else parts[0]
 
@@ -2362,8 +2394,12 @@ class _JSEmitter(ast.NodeVisitor):
 
     def _expr_Lambda(self, node: ast.Lambda) -> str:
         params = self._build_params(node.args, False)
-        body = self._expr(node.body)
-        return f"({params}) => {body}"
+        return f"({params}) => {self._arrow_body(node.body)}"
+
+    def _arrow_body(self, node: ast.expr) -> str:
+        """An arrow function's expression body: `x => {a: x}` would be a block, not an object."""
+        js = self._expr(node)
+        return f"({js})" if isinstance(node, ast.Dict) else js
 
     def _expr_Dict(self, node: ast.Dict) -> str:
         pairs: list[str] = []
@@ -2446,7 +2482,7 @@ class _JSEmitter(ast.NodeVisitor):
         gen = generators[0]
         iter_js = f"__iter({self._expr(gen.iter)})"
         target_js = self._arrow_param(gen.target)
-        elt_js = self._expr(elt)
+        elt_js = self._arrow_body(elt)
 
         result = iter_js
 

@@ -70,3 +70,13 @@ class TestApplyClassMap:
         js = "h('a', {className: 'external lnk'})"
         result = apply_class_map(js, {"lnk": "lnk-abc123"})
         assert "className: 'external lnk-abc123'" in result
+
+    def test_computed_classname_gets_module_scoper(self):
+        js = "h('a', {className: __cls('pill ' + s)})"
+        result = apply_class_map(js, {"pill": "pill-abc123"})
+        assert result.startswith('const __cls = (v) => __scopeClass(v, {"pill": "pill-abc123"});\n')
+        assert "__cls('pill ' + s)" in result
+
+    def test_no_scoper_without_computed_classes(self):
+        result = apply_class_map("h('a', {className: 'pill'})", {"pill": "pill-abc123"})
+        assert "__scopeClass" not in result

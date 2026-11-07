@@ -346,7 +346,44 @@ class TestOperators:
         assert ".includes(" in js
 
 
+class TestPrecedence:
+    """The AST drops the source's parentheses; the JS must get them back where needed."""
+
+    def test_or_inside_and(self):
+        assert "x = a && (b || c);" in _js("x = a and (b or c)")
+
+    def test_and_inside_or(self):
+        assert "x = a || (b && c);" in _js("x = a or (b and c)")
+
+    def test_member_of_bool_op(self):
+        assert "x = (a || b).k;" in _js("x = (a or b).k")
+        assert "x = (a || b)[0];" in _js("x = (a or b)[0]")
+
+    def test_bool_op_as_arithmetic_or_comparison_operand(self):
+        assert "x = ((a || b) + 1);" in _js("x = (a or b) + 1")
+        assert "x = (a || b) === c;" in _js("x = (a or b) == c")
+        assert "x = -(a || b);" in _js("x = -(a or b)")
+
+    def test_in_with_bool_op_container(self):
+        assert "x = (a || b).includes(k);" in _js("x = k in (a or b)")
+
+    def test_awaited_value_indexed(self):
+        js = _js("async def f():\n    return (await g())['k']")
+        assert "(await g())['k']" in js or '(await g())["k"]' in js
+
+
 class TestComprehensions:
+    def test_list_comp_of_dicts(self):
+        # an arrow body starting with { is a block in JS: the object needs parentheses
+        js = _js("rows = [{'k': v} for v in xs]")
+        assert ".map((v) => ({k: v}))" in js
+
+    def test_lambda_returning_dict(self):
+        assert "f = (v) => ({k: v});" in _js("f = lambda v: {'k': v}")
+
+    def test_dict_comp(self):
+        assert "Object.fromEntries(__iter(xs).map((v) => [v, (v * 2)]))" in _js("d = {v: v * 2 for v in xs}")
+
     def test_list_comp(self):
         js = _js("squares = [x**2 for x in items]")
         assert ".map(" in js
