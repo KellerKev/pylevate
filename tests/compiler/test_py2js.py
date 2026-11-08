@@ -343,7 +343,13 @@ class TestOperators:
 
     def test_in_operator(self):
         js = _js("if x in items:\n    pass")
-        assert ".includes(" in js
+        assert "__contains(items, x)" in js
+
+    def test_not_in_operator(self):
+        assert "x = !__contains(d, k);" in _js("x = k not in d")
+
+    def test_chained_in(self):
+        assert "x = __contains(b, a) && b === c;" in _js("x = a in b == c")
 
 
 class TestPrecedence:
@@ -365,7 +371,7 @@ class TestPrecedence:
         assert "x = -(a || b);" in _js("x = -(a or b)")
 
     def test_in_with_bool_op_container(self):
-        assert "x = (a || b).includes(k);" in _js("x = k in (a or b)")
+        assert "x = __contains(a || b, k);" in _js("x = k in (a or b)")
 
     def test_awaited_value_indexed(self):
         js = _js("async def f():\n    return (await g())['k']")

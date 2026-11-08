@@ -133,6 +133,19 @@ if (typeof globalThis.__truthy === 'undefined') {
   };
 }
 
+// Python `x in c`: membership for a list or string, a key for a dict, Map or Set. Plain
+// objects have no .includes, so `k in some_dict` cannot compile to it.
+if (typeof globalThis.__contains === 'undefined') {
+  globalThis.__contains = function __contains(c, x) {
+    if (c === null || c === undefined) return false;
+    if (typeof c === 'string' || Array.isArray(c)) return c.includes(x);
+    if (c instanceof Set || c instanceof Map) return c.has(x);
+    if (typeof c.includes === 'function') return c.includes(x);  // typed arrays, other sequences
+    if (typeof c.__contains__ === 'function') return c.__contains__(x);
+    return Object.hasOwn(c, x);
+  };
+}
+
 // A computed class attribute: className: __cls(expr). A module with scoped CSS defines its
 // own __cls that maps each class token through its class map; elsewhere it is the value.
 if (typeof globalThis.__cls === 'undefined') {

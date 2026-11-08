@@ -2373,10 +2373,11 @@ class _JSEmitter(ast.NodeVisitor):
             op_type = type(op)
 
             if op_type in (ast.In, ast.NotIn):
-                container = self._operand(comparator)
+                # A helper, not .includes(): a dict is a plain object, where `in` means a key.
+                container = self._expr(comparator)
                 member = self._expr(left_node)
                 neg = "!" if op_type == ast.NotIn else ""
-                parts.append(f"{neg}{container}.includes({member})")
+                parts.append(f"{neg}__contains({container}, {member})")
             else:
                 js_op = _CMPOP_MAP.get(op_type, "===")
                 parts.append(f"{left} {js_op} {right}")
