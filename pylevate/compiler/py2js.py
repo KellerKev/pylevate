@@ -17,6 +17,15 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Literal
 
+# Valid Python names that a JS module may not bind (`const { public } = ...` is a syntax error).
+# Template names get_context or __init__ provide under one of these are bound as `name$`.
+_JS_RESERVED = frozenset({
+    "case", "catch", "class", "const", "debugger", "default", "delete", "do", "enum", "export",
+    "extends", "function", "implements", "instanceof", "interface", "let", "new", "package",
+    "private", "protected", "public", "static", "switch", "this", "throw", "typeof", "var",
+    "void", "yield",
+})
+
 
 # ---------------------------------------------------------------------------
 # Public data types
@@ -287,6 +296,8 @@ class _JSEmitter(ast.NodeVisitor):
         # Index in _declared_vars of the innermost method's own scope: names bound from there
         # on (parameters, assignments) are that method's locals and shadow state fields.
         self._method_scope_base: int | None = None
+        # Template names bound under another name in the render() being compiled (see _JS_RESERVED).
+        self._render_renames: dict[str, str] = {}
 
     # -- Helpers -----------------------------------------------------------
 
@@ -678,39 +689,47 @@ class _JSEmitter(ast.NodeVisitor):
     def _emit_render_from_template(self, template_dict: ast.Dict) -> None:
         """Compile a template dict into a render() method with h() calls."""
         self._emit("render(props, state, context) {")
-        with self._indent_block():
-            # Destructure props if __init__ props were declared
-            init_props = self._class_init_props.get(self._in_class, [])
-            if init_props:
-                prop_names = [p[0] for p in init_props]
-                self._emit(f"let {{ {', '.join(prop_names)}, ...rest }} = props || {{}};")
+        init_props = self._class_init_props.get(self._in_class, [])
+        has_gc = self._class_has_get_context.get(self._in_class, False)
+        init_prop_names = [p[0] for p in init_props]
+        ctx_keys = [
+            k for k in self._class_context_keys.get(self._in_class, [])
+            if k not in init_prop_names
+        ] if has_gc else []
+        self._render_renames = {k: k + "$" for k in init_prop_names + ctx_keys if k in _JS_RESERVED}
 
-            # Call get_context() if defined — it can add derived props
-            has_gc = self._class_has_get_context.get(self._in_class, False)
-            if has_gc:
+        def bind(names: list[str]) -> str:
+            # `{ public }` → `{ public: public$ }`, as a destructuring pattern or an object literal
+            return ", ".join(f"{n}: {self._render_renames[n]}" if n in self._render_renames else n
+                             for n in names)
+
+        try:
+            with self._indent_block():
+                # Destructure props if __init__ props were declared
                 if init_props:
-                    prop_names_str = ", ".join(p[0] for p in init_props)
-                    self._emit(f"const _ctx = this.get_context({{ {prop_names_str}, ...rest }});")
-                    # Reassign props from context
-                    self._emit(f"({{ {', '.join(p[0] for p in init_props)}, ...rest }} = _ctx);")
-                else:
-                    self._emit("const _ctx = this.get_context(props || {});")
-                # Bind derived keys get_context added so [[key]] interpolations
-                # resolve as locals (init props are already destructured above).
-                init_prop_names = {p[0] for p in init_props}
-                ctx_keys = [
-                    k for k in self._class_context_keys.get(self._in_class, [])
-                    if k not in init_prop_names
-                ]
-                if ctx_keys:
-                    self._emit(f"const {{ {', '.join(ctx_keys)} }} = _ctx;")
+                    self._emit(f"let {{ {bind(init_prop_names)}, ...rest }} = props || {{}};")
 
-            # Children from parent (passed as props.children by Preact)
-            self._emit("const children = props && props.children;")
+                # Call get_context() if defined — it can add derived props
+                if has_gc:
+                    if init_props:
+                        self._emit(f"const _ctx = this.get_context({{ {bind(init_prop_names)}, ...rest }});")
+                        # Reassign props from context
+                        self._emit(f"({{ {bind(init_prop_names)}, ...rest }} = _ctx);")
+                    else:
+                        self._emit("const _ctx = this.get_context(props || {});")
+                    # Bind derived keys get_context added so [[key]] interpolations
+                    # resolve as locals (init props are already destructured above).
+                    if ctx_keys:
+                        self._emit(f"const {{ {bind(ctx_keys)} }} = _ctx;")
 
-            # Compile the template dict to h() call chain
-            h_expr = self._compile_template_dict(template_dict)
-            self._emit(f"return {h_expr};")
+                # Children from parent (passed as props.children by Preact)
+                self._emit("const children = props && props.children;")
+
+                # Compile the template dict to h() call chain
+                h_expr = self._compile_template_dict(template_dict)
+                self._emit(f"return {h_expr};")
+        finally:
+            self._render_renames = {}
         self._emit("}")
 
     def _compile_template_dict(self, node: ast.Dict) -> str:
@@ -1079,6 +1098,15 @@ class _JSEmitter(ast.NodeVisitor):
             return f"this.{field}"
 
         expr = _re.sub(r"self\.(\w+)", rewrite_self, expr)
+
+        # Template names bound under another name (a JS reserved word): rename bare uses,
+        # not `x.public` or text inside a string literal.
+        if self._render_renames:
+            names = "|".join(map(_re.escape, self._render_renames))
+            expr = _re.sub(
+                r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)"
+                rf"|(?<![\w$.])({names})(?![\w$])",
+                lambda m: m.group(1) or self._render_renames[m.group(2)], expr)
 
         # Bind method references: if expr is exactly `this.methodName` (simple method ref),
         # bind it so `this` is preserved in event handlers.
@@ -1873,6 +1901,8 @@ class _JSEmitter(ast.NodeVisitor):
             return "true"
         if name == "False":
             return "false"
+        if name in self._render_renames:
+            return self._render_renames[name]
         # A bare state-field name inside a method reads the state (shorthand for self.x) —
         # unless the method has its own local of that name (a parameter, or an assignment
         # already made in it), which shadows the field exactly as Python scoping would.

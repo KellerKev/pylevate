@@ -319,6 +319,32 @@ class Page(Component):
         assert "const _ctx = this.get_context(props || {});" in js
         assert "const { display_name, count } = _ctx;" in js
 
+    def test_reserved_word_keys_bind_under_another_name(self):
+        # `const { public } = _ctx` is a syntax error in an ES module
+        js = _js("""
+from pylevate import Component, h
+
+class Page(Component):
+    def get_context(self, props):
+        props['public'] = [1]
+        props['private'] = 'no'
+        props['count'] = 2
+        return props
+
+    template = {
+        h.div(): {
+            h.p(If='private', Class={'public ? "x" : "y"'}): '[[private]] "public"',
+            h.span(For='p in public', key={'p'}): '[[p.public]] [[count]]',
+        },
+    }
+""")
+        assert "const { public: public$, private: private$, count } = _ctx;" in js
+        render = js[js.index("render("):]
+        for bare in ("{ public }", "(public)", "${private}", "public ?", "public.map"):
+            assert bare not in render
+        assert "private$" in render and "public$.map" in render
+        assert "p.public" in render and '"public"' in render
+
 
 class TestDuplicateImports:
     def test_pylevate_runtime_merged(self):
