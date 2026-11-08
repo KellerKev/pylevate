@@ -27,6 +27,12 @@ _JS_RESERVED = frozenset({
 })
 
 
+def _js_name(name: str) -> str:
+    """A Python variable or parameter as a JS binding: `default` → `default$`. `this` is kept,
+    since a bare `this` in Python source means JS's own."""
+    return name + "$" if name in _JS_RESERVED and name != "this" else name
+
+
 # ---------------------------------------------------------------------------
 # Public data types
 # ---------------------------------------------------------------------------
@@ -1383,20 +1389,20 @@ class _JSEmitter(ast.NodeVisitor):
             if strip_self and arg.arg == "cls":
                 continue
             if default is not None:
-                parts.append(f"{arg.arg} = {self._expr(default)}")
+                parts.append(f"{_js_name(arg.arg)} = {self._expr(default)}")
             else:
-                parts.append(arg.arg)
+                parts.append(_js_name(arg.arg))
 
         # *args -> ...args
         if args.vararg:
-            parts.append(f"...{args.vararg.arg}")
+            parts.append(f"...{_js_name(args.vararg.arg)}")
 
         # keyword-only args
         for kw, default in zip(args.kwonlyargs, args.kw_defaults):
             if default is not None:
-                parts.append(f"{kw.arg} = {self._expr(default)}")
+                parts.append(f"{_js_name(kw.arg)} = {self._expr(default)}")
             else:
-                parts.append(kw.arg)
+                parts.append(_js_name(kw.arg))
 
         # **kwargs: not representable as JS keyword params. In a constructor it is
         # the idiomatic prop-forwarding pattern (`def __init__(self, x, **kw):
@@ -1406,7 +1412,7 @@ class _JSEmitter(ast.NodeVisitor):
         # would silently drop keyword args, so fail loudly.
         if args.kwarg:
             if allow_kwargs:
-                parts.append(f"...{args.kwarg.arg}")
+                parts.append(f"...{_js_name(args.kwarg.arg)}")
             else:
                 self._error(args.kwarg, f"`**{args.kwarg.arg}` (arbitrary keyword args) is not "
                                   "supported — declare explicit keyword arguments instead "
@@ -1468,7 +1474,8 @@ class _JSEmitter(ast.NodeVisitor):
     def _assign_target(self, target: ast.expr) -> str | None:
         """Convert an assignment target to JS lvalue (no 'let' prefix)."""
         if isinstance(target, ast.Name):
-            return target.id
+            # a class-body name is a field, where `static = 1` is fine; elsewhere it is a binding
+            return target.id if self._in_class and not self._in_method else _js_name(target.id)
         if isinstance(target, ast.Attribute):
             return self._expr(target)
         if isinstance(target, ast.Subscript):
@@ -1603,7 +1610,7 @@ class _JSEmitter(ast.NodeVisitor):
         scope = self._declared_vars[-1]
         new = [n for n in dict.fromkeys(names) if n not in scope]
         if new:
-            self._emit(f"let {', '.join(new)};")
+            self._emit(f"let {', '.join(map(_js_name, new))};")
             scope.update(new)
 
     def visit_If(self, node: ast.If) -> None:
@@ -1912,7 +1919,7 @@ class _JSEmitter(ast.NodeVisitor):
                 and not self._is_method_local(name)
                 and name in [f for f, _ in self._class_state_fields.get(self._in_class, [])]):
             return f"this._{name}.value"
-        return name
+        return _js_name(name)
 
     def _is_method_local(self, name: str) -> bool:
         base = self._method_scope_base

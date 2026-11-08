@@ -1,5 +1,8 @@
 """Phase 3 tests — Stores, reactivity, decorators, v-strings."""
 
+import shutil
+import subprocess
+
 from pylevate.compiler.py2js import compile_source
 
 
@@ -344,6 +347,39 @@ class Page(Component):
             assert bare not in render
         assert "private$" in render and "public$.map" in render
         assert "p.public" in render and '"public"' in render
+
+    def test_reserved_word_parameters_and_variables_are_renamed(self, tmp_path):
+        js = _js("""
+from pylevate import Component, h
+
+class Pick(Component):
+    def __init__(self, default, **kw):
+        super().__init__(default=default, **kw)
+
+    def choose(self, options, public=False):
+        new = [o for o in options if o != self.default]
+        if public:
+            static = len(new)
+        else:
+            static = 0
+        return list(map(lambda case: case + static, new))
+
+    template = {
+        h.div(): '[[default]]',
+    }
+""")
+        assert "constructor(default$, ...kw)" in js
+        assert "{default: default$}" in js
+        assert "choose(options, public$ = false)" in js
+        assert "(case$) => (case$ + static$)" in js
+        assert "let new$ = " in js and "static$ = 0;" in js
+        assert "${default$}" in js
+        node = shutil.which("node")
+        if node:
+            f = tmp_path / "m.mjs"
+            f.write_text(js)
+            r = subprocess.run([node, "--check", str(f)], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
 
 
 class TestDuplicateImports:
